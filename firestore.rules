@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user is the Super Admin
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.email == 'rupak.seance@gmail.com';
+    }
+
+    // Rules for family_members
+    match /family_members/{memberId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'simulated_user_b');
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.privacy == 'public' || resource.data.userId == 'simulated_user_b' || isSuperAdmin());
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == 'simulated_user_b' || isSuperAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == 'simulated_user_b' || isSuperAdmin());
+    }
+
+    // Rules for historical_documents
+    match /historical_documents/{docId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'simulated_user_b');
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == 'simulated_user_b' || isSuperAdmin());
+    }
+
+    // Rules for reminders
+    match /reminders/{reminderId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.userId == 'simulated_user_b');
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.userId == 'simulated_user_b' || isSuperAdmin());
+    }
+
+    // Rules for lineage_requests
+    match /lineage_requests/{requestId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isSuperAdmin();
+    }
+
+    // Rules for contact_messages (Secure contact form)
+    match /contact_messages/{messageId} {
+      allow create: if true;
+      allow read, update, delete: if isSuperAdmin();
+    }
+
+    // Rules for user_subscriptions (Premium upgrade management)
+    match /user_subscriptions/{userId} {
+      allow create, read, update: if isAuthenticated() && (userId == request.auth.uid || isSuperAdmin());
+      allow delete: if isSuperAdmin();
+    }
+
+    // Rules for donations (Elective support contributions)
+    match /donations/{donationId} {
+      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isSuperAdmin());
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Rules for system_settings (Global admin controls)
+    match /system_settings/{settingId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+  }
+}

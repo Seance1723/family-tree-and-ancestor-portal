@@ -1,0 +1,6 @@
+{
+  "name": "Kinly",
+  "description": "Discover ancestry, build visual family trees, manage historical records and photos, track important anniversaries, search for ancestral network connections, and securely sync across devices with full offline support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

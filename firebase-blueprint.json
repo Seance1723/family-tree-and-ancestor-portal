@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "family_members": {
+      "description": "Stores individual family members, ancestral nodes, and their genealogical relationships.",
+      "fields": {
+        "id": "string - Unique identifier of the family member",
+        "userId": "string - The owner of the record (Firebase UID)",
+        "name": "string - The encrypted or plaintext name",
+        "birthdate": "string - Birthdate in YYYY-MM-DD format (encrypted)",
+        "birthplace": "string - Plaintext or encrypted city/country of birth",
+        "gender": "string - 'male' | 'female' | 'other'",
+        "parents": "array of strings - IDs of father/mother in the database",
+        "siblings": "array of strings - IDs of siblings",
+        "children": "array of strings - IDs of children",
+        "contactPhone": "string - Contact number (encrypted)",
+        "contactEmail": "string - Email address (encrypted)",
+        "address": "string - Historical or current address (encrypted)",
+        "privacy": "string - 'private' | 'family' | 'public'",
+        "isAncestor": "boolean - True if this is an ancestor rather than direct family",
+        "photos": "array of strings - Optional URLs or base64 image strings attached",
+        "notes": "string - Anecdotes or known details",
+        "createdAt": "timestamp"
+      }
+    },
+    "historical_documents": {
+      "description": "Historical records, certificates, and photos.",
+      "fields": {
+        "id": "string",
+        "userId": "string",
+        "title": "string",
+        "description": "string",
+        "date": "string - Event or upload date",
+        "fileData": "string - base64 string or image link",
+        "tags": "array of strings",
+        "linkedMemberIds": "array of strings",
+        "createdAt": "timestamp"
+      }
+    },
+    "reminders": {
+      "description": "Anniversaries and birthday reminder definitions.",
+      "fields": {
+        "id": "string",
+        "userId": "string",
+        "memberId": "string",
+        "title": "string",
+        "date": "string - MM-DD format or YYYY-MM-DD",
+        "type": "string - 'birthday' | 'wedding' | 'anniversary' | 'death'",
+        "remindDaysBefore": "number",
+        "createdAt": "timestamp"
+      }
+    },
+    "lineage_requests": {
+      "description": "Stores access requests and restriction criteria between users for family member records.",
+      "fields": {
+        "id": "string - Unique identifier of the request",
+        "fromUserId": "string - UID of user requesting access",
+        "fromUserEmail": "string - Email or identifier of the requester",
+        "toUserId": "string - UID of user owning the record",
+        "memberId": "string - The ID of the family member record",
+        "memberName": "string - The name or relation of the member",
+        "status": "string - 'pending' | 'approved' | 'rejected'",
+        "allowedFields": "array of strings - e.g., ['birthdate', 'birthplace', 'contactPhone', 'contactEmail', 'address', 'notes']",
+        "createdAt": "timestamp"
+      }
+    },
+    "contact_messages": {
+      "description": "Stores submitted secure contact and support queries with integrated anti-spam metadata.",
+      "fields": {
+        "id": "string - Unique identifier of the message",
+        "name": "string - Full name of the sender",
+        "email": "string - Sender's verified secure email address",
+        "subject": "string - Subject topic of the query",
+        "message": "string - Main text of the request",
+        "submittedAt": "string - Timestamp of submission",
+        "clientReferrer": "string - Origin platform metadata",
+        "status": "string - Current status: 'unread' | 'read' | 'archived'"
+      }
+    },
+    "user_subscriptions": {
+      "description": "Stores user premium upgrade status, active subscription details, and transaction histories.",
+      "fields": {
+        "userId": "string - Firebase user identifier",
+        "isPremium": "boolean - True if upgraded to unlimited member plan",
+        "razorpayOrderId": "string - Latest Razorpay Order ID created",
+        "razorpayPaymentId": "string - Razorpay payment reference ID",
+        "razorpaySignature": "string - Razorpay verified secure signature hash",
+        "amountPaid": "number - Amount in INR (or paise)",
+        "paymentStatus": "string - 'created' | 'paid' | 'failed'",
+        "expiresAt": "string - Expiry timestamp of the current subscription",
+        "updatedAt": "timestamp"
+      }
+    },
+    "donations": {
+      "description": "Stores elective support contributions made by users.",
+      "fields": {
+        "id": "string - Unique contribution ID",
+        "userId": "string - Firebase user ID",
+        "email": "string - Contributor's email",
+        "amount": "number - Contributed amount in INR",
+        "razorpayPaymentId": "string - Payment reference",
+        "razorpayOrderId": "string - Order ID",
+        "contributedAt": "number - Epoch timestamp",
+        "status": "string - 'completed'"
+      }
+    },
+    "system_settings": {
+      "description": "System-wide settings managed by the Super Admin.",
+      "fields": {
+        "id": "string - 'config'",
+        "supportFlowEnabled": "boolean - Toggle if donation tab is visible",
+        "upgradeFlowEnabled": "boolean - Toggle if upgrade plan flow is active",
+        "maxMembersIfUpgradeEnabled": "number - Max member count slot limit if upgraded"
+      }
+    }
+  }
+}
