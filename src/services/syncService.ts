@@ -1,15 +1,4 @@
 import { 
-  db, 
-  collection, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  getDocs, 
-  getDoc,
-  query, 
-  where 
-} from "./firebase";
-import { 
   FamilyMember, 
   HistoricalDocument, 
   AnniversaryReminder,
@@ -27,14 +16,43 @@ import {
   getOfflineReminders
 } from "../utils/indexedDB";
 
-// Collection names
-const MEMBERS_COLL = "family_members";
-const DOCS_COLL = "historical_documents";
-const REMINDERS_COLL = "reminders";
-
 // Helper to check network status
 export function isOnline(): boolean {
   return navigator.onLine;
+}
+
+function getToken(): string | null {
+  return localStorage.getItem("ft_auth_token");
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function apiPost(path: string, body: any) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
+
+async function apiGet(path: string) {
+  const res = await fetch(path, { headers: { ...authHeaders() } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
+
+async function apiDelete(path: string) {
+  const res = await fetch(path, { method: "DELETE", headers: { ...authHeaders() } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
 }
 
 // -----------------------------------------------------------------------------
@@ -49,151 +67,63 @@ export async function syncDatabase(userId: string): Promise<{
   if (!isOnline()) return result;
 
   try {
-    // 1. PUSH MEMBERS
     const localMembers = await getOfflineMembers();
-    for (const member of localMembers) {
-      if (member.userId !== userId) continue;
-      
-      if (member.pendingSync === "delete") {
-        try {
-          await deleteDoc(doc(db, MEMBERS_COLL, member.id));
-          await deleteOfflineMember(member.id);
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to delete member ${member.name}: ${err.message}`);
-        }
-      } else if (member.pendingSync === "create" || member.pendingSync === "update" || !member.synced) {
-        try {
-          const { synced, pendingSync, ...firestoreData } = member;
-          await setDoc(doc(db, MEMBERS_COLL, member.id), firestoreData);
-          await saveOfflineMember({ ...member, synced: true, pendingSync: null });
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to sync member ${member.name}: ${err.message}`);
-        }
-      }
-    }
-
-    // 2. PUSH DOCUMENTS
     const localDocs = await getOfflineDocuments();
-    for (const d of localDocs) {
-      if (d.userId !== userId) continue;
-
-      if (d.pendingSync === "delete") {
-        try {
-          await deleteDoc(doc(db, DOCS_COLL, d.id));
-          await deleteOfflineDocument(d.id);
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to delete document ${d.title}: ${err.message}`);
-        }
-      } else if (d.pendingSync === "create" || d.pendingSync === "update" || !d.synced) {
-        try {
-          const { synced, pendingSync, ...firestoreData } = d;
-          await setDoc(doc(db, DOCS_COLL, d.id), firestoreData);
-          await saveOfflineDocument({ ...d, synced: true, pendingSync: null });
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to sync document ${d.title}: ${err.message}`);
-        }
-      }
-    }
-
-    // 3. PUSH REMINDERS
     const localReminders = await getOfflineReminders();
-    for (const r of localReminders) {
-      if (r.userId !== userId) continue;
 
-      if (r.pendingSync === "delete") {
-        try {
-          await deleteDoc(doc(db, REMINDERS_COLL, r.id));
-          await deleteOfflineReminder(r.id);
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to delete reminder ${r.title}: ${err.message}`);
-        }
-      } else if (r.pendingSync === "create" || r.pendingSync === "update" || !r.synced) {
-        try {
-          const { synced, pendingSync, ...firestoreData } = r;
-          await setDoc(doc(db, REMINDERS_COLL, r.id), firestoreData);
-          await saveOfflineReminder({ ...r, synced: true, pendingSync: null });
-          result.pushed++;
-        } catch (err: any) {
-          result.errors.push(`Failed to sync reminder ${r.title}: ${err.message}`);
-        }
+    const membersToPush = localMembers.filter((m) => m.userId === userId);
+    const docsToPush = localDocs.filter((d) => d.userId === userId);
+    const remindersToPush = localReminders.filter((r) => r.userId === userId);
+
+    const res = await apiPost("/api/sync", {
+      members: membersToPush,
+      documents: docsToPush,
+      reminders: remindersToPush,
+    });
+
+    result.pushed = res.pushed ?? 0;
+
+    const serverMembers = res.members as FamilyMember[] || [];
+    const serverDocs = res.documents as HistoricalDocument[] || [];
+    const serverReminders = res.reminders as AnniversaryReminder[] || [];
+
+    const memberIds = new Set(serverMembers.map((m) => m.id));
+    const docIds = new Set(serverDocs.map((d) => d.id));
+    const reminderIds = new Set(serverReminders.map((r) => r.id));
+
+    for (const m of serverMembers) {
+      await saveOfflineMember({ ...m, synced: true, pendingSync: null });
+      result.pulled++;
+    }
+    for (const d of serverDocs) {
+      await saveOfflineDocument({ ...d, synced: true, pendingSync: null });
+      result.pulled++;
+    }
+    for (const r of serverReminders) {
+      await saveOfflineReminder({ ...r, synced: true, pendingSync: null });
+      result.pulled++;
+    }
+
+    // Remove local records that no longer exist on the server and aren't pending sync
+    for (const lm of await getOfflineMembers()) {
+      if (lm.userId === userId && !memberIds.has(lm.id) && !lm.pendingSync) {
+        await deleteOfflineMember(lm.id);
+      }
+    }
+    for (const ld of await getOfflineDocuments()) {
+      if (ld.userId === userId && !docIds.has(ld.id) && !ld.pendingSync) {
+        await deleteOfflineDocument(ld.id);
+      }
+    }
+    for (const lr of await getOfflineReminders()) {
+      if (lr.userId === userId && !reminderIds.has(lr.id) && !lr.pendingSync) {
+        await deleteOfflineReminder(lr.id);
       }
     }
 
-    // 4. PULL RECENT MEMBERS
-    try {
-      const memberQuery = query(collection(db, MEMBERS_COLL), where("userId", "==", userId));
-      const memberSnap = await getDocs(memberQuery);
-      const syncedIds = new Set<string>();
-      
-      memberSnap.forEach((d) => {
-        const data = d.data() as FamilyMember;
-        syncedIds.add(data.id);
-        saveOfflineMember({ ...data, synced: true, pendingSync: null });
-        result.pulled++;
-      });
-
-      // Remove local items not in server (and not pending sync)
-      const currentLocals = await getOfflineMembers();
-      for (const lm of currentLocals) {
-        if (lm.userId === userId && !syncedIds.has(lm.id) && !lm.pendingSync) {
-          await deleteOfflineMember(lm.id);
-        }
-      }
-    } catch (err: any) {
-      result.errors.push(`Failed to pull members: ${err.message}`);
+    if (res.errors && Array.isArray(res.errors)) {
+      result.errors.push(...res.errors);
     }
-
-    // 5. PULL RECENT DOCUMENTS
-    try {
-      const docQuery = query(collection(db, DOCS_COLL), where("userId", "==", userId));
-      const docSnap = await getDocs(docQuery);
-      const syncedDocIds = new Set<string>();
-
-      docSnap.forEach((d) => {
-        const data = d.data() as HistoricalDocument;
-        syncedDocIds.add(data.id);
-        saveOfflineDocument({ ...data, synced: true, pendingSync: null });
-        result.pulled++;
-      });
-
-      const currentLocalDocs = await getOfflineDocuments();
-      for (const ld of currentLocalDocs) {
-        if (ld.userId === userId && !syncedDocIds.has(ld.id) && !ld.pendingSync) {
-          await deleteOfflineDocument(ld.id);
-        }
-      }
-    } catch (err: any) {
-      result.errors.push(`Failed to pull documents: ${err.message}`);
-    }
-
-    // 6. PULL RECENT REMINDERS
-    try {
-      const remQuery = query(collection(db, REMINDERS_COLL), where("userId", "==", userId));
-      const remSnap = await getDocs(remQuery);
-      const syncedRemIds = new Set<string>();
-
-      remSnap.forEach((d) => {
-        const data = d.data() as AnniversaryReminder;
-        syncedRemIds.add(data.id);
-        saveOfflineReminder({ ...data, synced: true, pendingSync: null });
-        result.pulled++;
-      });
-
-      const currentLocalRems = await getOfflineReminders();
-      for (const lr of currentLocalRems) {
-        if (lr.userId === userId && !syncedRemIds.has(lr.id) && !lr.pendingSync) {
-          await deleteOfflineReminder(lr.id);
-        }
-      }
-    } catch (err: any) {
-      result.errors.push(`Failed to pull reminders: ${err.message}`);
-    }
-
   } catch (error: any) {
     result.errors.push(`General sync error: ${error.message}`);
   }
@@ -207,17 +137,15 @@ export async function syncDatabase(userId: string): Promise<{
 
 // MEMBERS
 export async function addOrUpdateMember(member: FamilyMember): Promise<FamilyMember> {
-  // 1. Save to Offline DB first
   const updatedMember = { ...member };
   
   if (isOnline()) {
     try {
-      const { synced, pendingSync, ...firestoreData } = updatedMember;
-      await setDoc(doc(db, MEMBERS_COLL, member.id), firestoreData);
+      await apiPost(`/api/members/${member.id}`, member);
       updatedMember.synced = true;
       updatedMember.pendingSync = null;
     } catch (e) {
-      console.warn("Write to Firestore failed, queueing offline:", e);
+      console.warn("Write to server failed, queueing offline:", e);
       updatedMember.synced = false;
       updatedMember.pendingSync = member.pendingSync || "update";
     }
@@ -233,10 +161,10 @@ export async function addOrUpdateMember(member: FamilyMember): Promise<FamilyMem
 export async function removeMember(member: FamilyMember): Promise<void> {
   if (isOnline()) {
     try {
-      await deleteDoc(doc(db, MEMBERS_COLL, member.id));
+      await apiDelete(`/api/members/${member.id}`);
       await deleteOfflineMember(member.id);
     } catch (e) {
-      console.warn("Delete Firestore failed, queueing offline delete:", e);
+      console.warn("Delete from server failed, queueing offline delete:", e);
       await saveOfflineMember({ ...member, pendingSync: "delete", synced: false });
     }
   } else {
@@ -250,12 +178,11 @@ export async function addOrUpdateDoc(docData: HistoricalDocument): Promise<Histo
 
   if (isOnline()) {
     try {
-      const { synced, pendingSync, ...firestoreData } = updatedDoc;
-      await setDoc(doc(db, DOCS_COLL, docData.id), firestoreData);
+      await apiPost(`/api/documents/${docData.id}`, docData);
       updatedDoc.synced = true;
       updatedDoc.pendingSync = null;
     } catch (e) {
-      console.warn("Write document to Firestore failed, queueing offline:", e);
+      console.warn("Write document to server failed, queueing offline:", e);
       updatedDoc.synced = false;
       updatedDoc.pendingSync = docData.pendingSync || "update";
     }
@@ -271,10 +198,10 @@ export async function addOrUpdateDoc(docData: HistoricalDocument): Promise<Histo
 export async function removeDoc(docData: HistoricalDocument): Promise<void> {
   if (isOnline()) {
     try {
-      await deleteDoc(doc(db, DOCS_COLL, docData.id));
+      await apiDelete(`/api/documents/${docData.id}`);
       await deleteOfflineDocument(docData.id);
     } catch (e) {
-      console.warn("Delete document from Firestore failed, queueing offline delete:", e);
+      console.warn("Delete document from server failed, queueing offline delete:", e);
       await saveOfflineDocument({ ...docData, pendingSync: "delete", synced: false });
     }
   } else {
@@ -288,12 +215,11 @@ export async function addOrUpdateRem(reminder: AnniversaryReminder): Promise<Ann
 
   if (isOnline()) {
     try {
-      const { synced, pendingSync, ...firestoreData } = updatedRem;
-      await setDoc(doc(db, REMINDERS_COLL, reminder.id), firestoreData);
+      await apiPost(`/api/reminders/${reminder.id}`, reminder);
       updatedRem.synced = true;
       updatedRem.pendingSync = null;
     } catch (e) {
-      console.warn("Write reminder to Firestore failed, queueing offline:", e);
+      console.warn("Write reminder to server failed, queueing offline:", e);
       updatedRem.synced = false;
       updatedRem.pendingSync = reminder.pendingSync || "update";
     }
@@ -309,10 +235,10 @@ export async function addOrUpdateRem(reminder: AnniversaryReminder): Promise<Ann
 export async function removeRem(reminder: AnniversaryReminder): Promise<void> {
   if (isOnline()) {
     try {
-      await deleteDoc(doc(db, REMINDERS_COLL, reminder.id));
+      await apiDelete(`/api/reminders/${reminder.id}`);
       await deleteOfflineReminder(reminder.id);
     } catch (e) {
-      console.warn("Delete reminder from Firestore failed, queueing offline delete:", e);
+      console.warn("Delete reminder from server failed, queueing offline delete:", e);
       await saveOfflineReminder({ ...reminder, pendingSync: "delete", synced: false });
     }
   } else {
@@ -323,25 +249,12 @@ export async function removeRem(reminder: AnniversaryReminder): Promise<void> {
 // -----------------------------------------------------------------------------
 // EXTENDED ANCESTRAL SCANNING QUERIES
 // -----------------------------------------------------------------------------
-export async function fetchAllPublicAncestors(excludeUserId: string): Promise<FamilyMember[]> {
+export async function fetchAllPublicAncestors(_excludeUserId: string): Promise<FamilyMember[]> {
   if (!isOnline()) return [];
 
   try {
-    const q = query(collection(db, MEMBERS_COLL));
-    const snap = await getDocs(q);
-    const publicMembers: FamilyMember[] = [];
-    
-    snap.forEach((d) => {
-      const m = d.data() as FamilyMember;
-      if (m.userId !== excludeUserId) {
-        const advVisibility = m.advanced_privacy?.profileVisibility || (m.privacy === "public" ? "public" : m.privacy === "family" ? "friends" : "private");
-        if (advVisibility !== "private") {
-          publicMembers.push(m);
-        }
-      }
-    });
-
-    return publicMembers;
+    const data = await apiGet("/api/members/public");
+    return data as FamilyMember[];
   } catch (error) {
     console.error("Failed to fetch public ancestral records:", error);
     return [];
@@ -351,44 +264,32 @@ export async function fetchAllPublicAncestors(excludeUserId: string): Promise<Fa
 // -----------------------------------------------------------------------------
 // LINEAGE ACCESS REQUEST FUNCTIONS
 // -----------------------------------------------------------------------------
-const REQUESTS_COLL = "lineage_requests";
-
 export async function addOrUpdateAccessRequest(request: LineageAccessRequest): Promise<void> {
   if (!isOnline()) return;
   try {
-    await setDoc(doc(db, REQUESTS_COLL, request.id), request);
+    await apiPost(`/api/requests/${request.id}`, request);
   } catch (error) {
-    console.error("Failed to set access request in Firestore:", error);
+    console.error("Failed to save access request:", error);
     throw error;
   }
 }
 
-export async function fetchIncomingAccessRequests(userId: string): Promise<LineageAccessRequest[]> {
+export async function fetchIncomingAccessRequests(_userId: string): Promise<LineageAccessRequest[]> {
   if (!isOnline()) return [];
   try {
-    const q = query(collection(db, REQUESTS_COLL), where("toUserId", "==", userId));
-    const snap = await getDocs(q);
-    const requests: LineageAccessRequest[] = [];
-    snap.forEach((d) => {
-      requests.push(d.data() as LineageAccessRequest);
-    });
-    return requests.sort((a, b) => b.createdAt - a.createdAt);
+    const data = await apiGet("/api/requests/incoming");
+    return (data as LineageAccessRequest[]).sort((a, b) => b.createdAt - a.createdAt);
   } catch (error) {
     console.error("Failed to fetch incoming requests:", error);
     return [];
   }
 }
 
-export async function fetchOutgoingAccessRequests(userId: string): Promise<LineageAccessRequest[]> {
+export async function fetchOutgoingAccessRequests(_userId: string): Promise<LineageAccessRequest[]> {
   if (!isOnline()) return [];
   try {
-    const q = query(collection(db, REQUESTS_COLL), where("fromUserId", "==", userId));
-    const snap = await getDocs(q);
-    const requests: LineageAccessRequest[] = [];
-    snap.forEach((d) => {
-      requests.push(d.data() as LineageAccessRequest);
-    });
-    return requests.sort((a, b) => b.createdAt - a.createdAt);
+    const data = await apiGet("/api/requests/outgoing");
+    return (data as LineageAccessRequest[]).sort((a, b) => b.createdAt - a.createdAt);
   } catch (error) {
     console.error("Failed to fetch outgoing requests:", error);
     return [];
@@ -398,12 +299,8 @@ export async function fetchOutgoingAccessRequests(userId: string): Promise<Linea
 export async function fetchFamilyMemberById(memberId: string): Promise<FamilyMember | null> {
   if (!isOnline()) return null;
   try {
-    const docRef = doc(db, MEMBERS_COLL, memberId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return snap.data() as FamilyMember;
-    }
-    return null;
+    const data = await apiGet(`/api/members/${memberId}`);
+    return data as FamilyMember;
   } catch (error) {
     console.error("Failed to fetch family member by ID:", error);
     return null;
@@ -425,13 +322,12 @@ export async function seedPlaygroundTrees(userId: string, masterKey: string): Pr
   let pushedA = 0;
   let pushedB = 0;
 
-  // 1. Seed Tree A to active user (both local IndexedDB and Firestore)
+  // 1. Seed Tree A to active user (local IndexedDB + server)
   for (const m of treeA) {
     try {
-      await saveOfflineMember(m); // Save to IndexedDB
+      await saveOfflineMember(m);
       if (isOnline()) {
-        const { synced, pendingSync, ...firestoreData } = m;
-        await setDoc(doc(db, MEMBERS_COLL, m.id), firestoreData);
+        await apiPost(`/api/members/${m.id}`, m);
       }
       pushedA++;
     } catch (e) {
@@ -439,12 +335,11 @@ export async function seedPlaygroundTrees(userId: string, masterKey: string): Pr
     }
   }
 
-  // 2. Seed Tree B to simulated user B in Firestore
+  // 2. Seed Tree B to simulated user B on server
   if (isOnline()) {
     for (const m of treeB) {
       try {
-        const { synced, pendingSync, ...firestoreData } = m;
-        await setDoc(doc(db, MEMBERS_COLL, m.id), firestoreData);
+        await apiPost(`/api/members/${m.id}`, m);
         pushedB++;
       } catch (e) {
         console.error("Failed to seed tree B member:", e);

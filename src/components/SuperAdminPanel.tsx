@@ -17,16 +17,39 @@ import {
   Database,
   Grid
 } from "lucide-react";
-import { 
-  db, 
-  collection, 
-  getDocs, 
-  doc, 
-  updateDoc, 
-  deleteDoc,
-  getDoc,
-  setDoc
-} from "../services/firebase";
+function getToken() {
+  return localStorage.getItem("ft_auth_token");
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function apiGet(path: string) {
+  const res = await fetch(path, { headers: { ...authHeaders() } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
+
+async function apiPost(path: string, body: any) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
+
+async function apiDelete(path: string) {
+  const res = await fetch(path, { method: "DELETE", headers: { ...authHeaders() } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data;
+}
 
 interface ContactMessage {
   id: string;
@@ -67,7 +90,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
   // Admin access simulation toggle for reviewers
   const [simulatedAdmin, setSimulatedAdmin] = useState(true);
 
-  // Firestore retrieved states
+  // SQL backend retrieved states
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [nodes, setNodes] = useState<FamilyNode[]>([]);
   const [subscriptions, setSubscriptions] = useState<UserSubscription[]>([]);
@@ -107,49 +130,39 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
     setErrorLog("");
     try {
       // 1. Fetch Contact Messages
-      const msgSnap = await getDocs(collection(db, "contact_messages"));
-      const msgList: ContactMessage[] = [];
-      msgSnap.forEach((d) => {
-        const data = d.data();
-        msgList.push({
-          id: d.id,
-          name: data.name || "Anonymous",
-          email: data.email || "",
-          subject: data.subject || "No Subject",
-          message: data.message || "",
-          submittedAt: data.submittedAt || new Date().toISOString(),
-          clientReferrer: data.clientReferrer,
-          status: data.status || "unread"
-        });
-      });
-      // Sort messages descending by submitted date
+      const msgData = await apiGet("/api/admin/contact-messages") as any[];
+      const msgList: ContactMessage[] = msgData.map((d) => ({
+        id: d.id,
+        name: d.name || "Anonymous",
+        email: d.email || "",
+        subject: d.subject || "No Subject",
+        message: d.message || "",
+        submittedAt: d.submittedAt || new Date(d.createdAt).toISOString(),
+        clientReferrer: d.clientReferrer,
+        status: d.status || "unread"
+      }));
       msgList.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
       setMessages(msgList);
 
       // 2. Fetch Family Nodes
-      const nodeSnap = await getDocs(collection(db, "family_members"));
-      const nodeList: FamilyNode[] = [];
-      nodeSnap.forEach((d) => {
-        const data = d.data();
-        nodeList.push({
-          id: d.id,
-          userId: data.userId || "Unknown",
-          name: data.name || "Unnamed Node",
-          gender: data.gender || "other",
-          privacy: data.privacy || "private",
-          isAncestor: data.isAncestor || false,
-          createdAt: data.createdAt
-        });
-      });
+      const nodeData = await apiGet("/api/admin/members") as any[];
+      const nodeList: FamilyNode[] = nodeData.map((d) => ({
+        id: d.id,
+        userId: d.userId || "Unknown",
+        name: d.name || "Unnamed Node",
+        gender: d.gender || "other",
+        privacy: d.privacy || "private",
+        isAncestor: d.isAncestor || false,
+        createdAt: d.createdAt
+      }));
       setNodes(nodeList);
 
       // 3. Fetch User Subscriptions
-      const subSnap = await getDocs(collection(db, "user_subscriptions"));
-      const subList: UserSubscription[] = [];
-      subSnap.forEach((d) => {
-        const data = d.data();
-        subList.push({
-          id: d.id,
+      const subData = await apiGet("/api/admin/subscriptions") as any[];
+      const subList: UserSubscription[] = subData.map((d) => {
+        const data = d.data || {};
+        return {
+          id: d.userId,
           isPremium: !!data.isPremium,
           slots: data.slots || 0,
           amountPaid: data.amountPaid || 0,
@@ -157,22 +170,20 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
           razorpayOrderId: data.razorpayOrderId || "",
           razorpayPaymentId: data.razorpayPaymentId || "",
           expiresAt: data.expiresAt
-        });
+        };
       });
       setSubscriptions(subList);
 
       // 4. Fetch Global System Settings
       try {
-        const settingsRef = doc(db, "system_settings", "config");
-        const settingsSnap = await getDoc(settingsRef);
-        if (settingsSnap.exists()) {
-          const sData = settingsSnap.data();
+        const settingsRes = await apiGet("/api/system-settings/config") as { exists: boolean; data?: any };
+        if (settingsRes.exists && settingsRes.data) {
+          const sData = settingsRes.data;
           setSupportFlowEnabled(sData.supportFlowEnabled !== false);
           setUpgradeFlowEnabled(sData.upgradeFlowEnabled !== false);
           setMaxMembersIfUpgradeEnabled(sData.maxMembersIfUpgradeEnabled ?? 50);
         } else {
-          // Setup initial default configuration
-          await setDoc(settingsRef, {
+          await apiPost("/api/system-settings/config", {
             supportFlowEnabled: true,
             upgradeFlowEnabled: true,
             maxMembersIfUpgradeEnabled: 50
@@ -208,7 +219,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
 
     } catch (err: any) {
       console.error("Failed to populate super admin data:", err);
-      setErrorLog(err.message || "Permission Denied. Verify Security Rule settings.");
+      setErrorLog(err.message || "Permission Denied. Verify admin settings.");
     } finally {
       setIsLoading(false);
     }
@@ -222,8 +233,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
   const handleSaveSettings = async () => {
     setIsSavingSettings(true);
     try {
-      const settingsRef = doc(db, "system_settings", "config");
-      await setDoc(settingsRef, {
+      await apiPost("/api/system-settings/config", {
         supportFlowEnabled,
         upgradeFlowEnabled,
         maxMembersIfUpgradeEnabled: Number(maxMembersIfUpgradeEnabled) || 50
@@ -238,8 +248,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
 
   const updateMessageStatus = async (messageId: string, newStatus: "read" | "archived") => {
     try {
-      const docRef = doc(db, "contact_messages", messageId);
-      await updateDoc(docRef, { status: newStatus });
+      await apiPost(`/api/admin/contact-messages/${messageId}/status`, { status: newStatus });
       
       // Update local state
       setMessages(prev => prev.map(m => m.id === messageId ? { ...m, status: newStatus } : m));
@@ -254,14 +263,14 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
         setSelectedMessage(prev => prev ? { ...prev, status: newStatus } : null);
       }
     } catch (err: any) {
-      alert("Failed to update status in Firestore: " + err.message);
+      alert("Failed to update status: " + err.message);
     }
   };
 
   const deleteMessage = async (messageId: string) => {
     if (!window.confirm("Are you absolutely sure you want to permanently delete this support request?")) return;
     try {
-      await deleteDoc(doc(db, "contact_messages", messageId));
+      await apiDelete(`/api/admin/contact-messages/${messageId}`);
       setMessages(prev => prev.filter(m => m.id !== messageId));
       if (selectedMessage && selectedMessage.id === messageId) {
         setSelectedMessage(null);
@@ -281,7 +290,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
   const deleteFamilyNode = async (nodeId: string, nodeName: string) => {
     if (!window.confirm(`Moderate node warning: Are you sure you want to delete family node "${nodeName}"?`)) return;
     try {
-      await deleteDoc(doc(db, "family_members", nodeId));
+      await apiDelete(`/api/admin/members/${nodeId}`);
       setNodes(prev => prev.filter(n => n.id !== nodeId));
       setStats(prev => ({
         ...prev,
@@ -440,7 +449,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
         <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex items-start gap-3 text-xs text-rose-800 animate-shake">
           <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
           <div>
-            <span className="font-bold">Firestore Database Synchronizer Error:</span>
+            <span className="font-bold">SQL Database Synchronizer Error:</span>
             <p className="mt-0.5 font-mono text-[10px] bg-rose-100/50 p-2 rounded border border-rose-200/50">{errorLog}</p>
             <button 
               onClick={loadAdminData}
@@ -552,7 +561,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
                   <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-2xl space-y-3">
                     <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider font-mono">⚡ System Administration Directives</h4>
                     <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4">
-                      <li>You are connected to custom Firestore database ID: <code className="bg-white px-1 py-0.5 border border-slate-200 text-slate-800 font-mono text-[10px]">ai-studio-familytree...</code></li>
+                      <li>You are connected to the MySQL SQL backend: <code className="bg-white px-1 py-0.5 border border-slate-200 text-slate-800 font-mono text-[10px]">family_tree_portal</code></li>
                       <li>Secure rules are configured to restrict read/write access of support data to authenticated administrators with email <code className="bg-white px-1 text-slate-800">rupak.seance@gmail.com</code>.</li>
                       <li>Always confirm user content identity before processing node moderation deletions.</li>
                     </ul>
@@ -802,7 +811,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
                         <th className="px-4 py-3">Gender</th>
                         <th className="px-4 py-3">Privacy Setting</th>
                         <th className="px-4 py-3">Type</th>
-                        <th className="px-4 py-3">Owner UID (Firebase)</th>
+                        <th className="px-4 py-3">Owner UID (SQL)</th>
                         <th className="px-4 py-3 text-right">Moderator Action</th>
                       </tr>
                     </thead>
@@ -986,7 +995,7 @@ export default function SuperAdminPanel({ currentEmail, onExit }: { currentEmail
                       <Database className="h-4 w-4 text-slate-700" />
                       <span>Database Diagnostics & Reseeding Coordinator</span>
                     </h3>
-                    <p className="text-xs text-slate-500">Perform comprehensive administrator maintenance commands directly on Firestore.</p>
+                    <p className="text-xs text-slate-500">Perform comprehensive administrator maintenance commands directly on the SQL backend.</p>
                   </div>
 
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">

@@ -468,7 +468,7 @@ export default function App() {
       setSubscription(subData);
       setShowPaymentModal(false);
     } catch (e) {
-      console.error("Failed to update user subscription in Firestore:", e);
+      console.error("Failed to update user subscription in SQL backend:", e);
       alert("Billing record update failed. Please contact support.");
     }
   };
@@ -658,26 +658,27 @@ export default function App() {
 
   // 1. LISTEN TO AUTHENTICATION
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      console.log("[App] onAuthStateChanged callback", currentUser);
+      setUser(currentUser);
       setLoading(false);
       
-      if (firebaseUser) {
+      if (currentUser) {
         setShowLanding(false);
         // Set deterministic default master key based on userId to ensure zero-friction, 
         // but let user toggle custom premium encryption passwords
         if (!useCustomKey) {
-          setMasterKey(firebaseUser.uid.substring(0, 16) + "AncestryVault");
+          setMasterKey(currentUser.uid.substring(0, 16) + "AncestryVault");
         }
         
         // Initial load of local records (Offline first!)
         await loadLocalDatabase();
         
         // Load subscription details
-        await loadUserSubscription(firebaseUser.uid);
+        await loadUserSubscription(currentUser.uid);
         
         // Automatic cloud sync attempt
-        await triggerSync(firebaseUser.uid);
+        await triggerSync(currentUser.uid);
         await loadRequests();
       } else {
         setShowLanding(true);
@@ -750,7 +751,7 @@ export default function App() {
     }
   };
 
-  // Sync with Firestore Cloud
+  // Sync with SQL backend
   const triggerSync = async (userId: string) => {
     if (!isOnline() || isSyncing) return;
     setIsSyncing(true);
@@ -775,11 +776,7 @@ export default function App() {
   // -----------------------------------------------------------------------------
   const handleGoogleLogin = async () => {
     setAuthError("");
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err: any) {
-      setAuthError(err.message || "Failed to log in with Google.");
-    }
+    setAuthError("Google sign-in is not available in this SQL-backed build. Please use email/password.");
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {

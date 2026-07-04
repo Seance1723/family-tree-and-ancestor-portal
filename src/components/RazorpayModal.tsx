@@ -565,7 +565,7 @@ export default function RazorpayModal({ amount, email, slots, onSuccess, onClose
                 <div className="text-center">
                   <h3 className="font-black text-slate-100 text-lg">Payment Processed Successfully!</h3>
                   <p className="text-xs text-emerald-400 mt-1.5 font-semibold">Your family tree is now upgraded to unlimited slots</p>
-                  <p className="text-[11px] text-slate-400 mt-3 font-mono">Syncing billing ledger records to Firestore Cloud...</p>
+                  <p className="text-[11px] text-slate-400 mt-3 font-mono">Syncing billing ledger records to SQL backend...</p>
                 </div>
               </motion.div>
             )}

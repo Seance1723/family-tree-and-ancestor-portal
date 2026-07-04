@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mail, CheckCircle, AlertTriangle, RefreshCw, Send, ShieldAlert, Clock } from "lucide-react";
-import { db, collection, doc, setDoc } from "../services/firebase";
+import { auth } from "../services/firebase";
 
 export default function ContactUs() {
   // Contact form state
@@ -84,18 +84,25 @@ export default function ContactUs() {
 
     try {
       const messageId = "msg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
-      const docRef = doc(collection(db, "contact_messages"), messageId);
-      
-      await setDoc(docRef, {
-        id: messageId,
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        subject: subject.trim(),
-        message: message.trim(),
-        submittedAt: new Date().toISOString(),
-        clientReferrer: "Kinly Web Vault Dedicated Contact",
-        status: "unread" // default for Super Admin moderator
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: messageId,
+          userId: auth.currentUser?.uid,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          subject: subject.trim(),
+          message: message.trim(),
+          submittedAt: new Date().toISOString(),
+          clientReferrer: "Kinly Web Vault Dedicated Contact",
+          status: "unread",
+        }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to send message");
+      }
 
       setSubmitSuccess(true);
       setName("");

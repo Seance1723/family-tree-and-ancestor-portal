@@ -59,7 +59,7 @@ export default function AncestralMatcher({
     "birthdate", "birthplace", "notes"
   ]);
 
-  // Load requests from Firebase
+  // Load requests from SQL backend
   const loadRequests = async () => {
     setLoadingRequests(true);
     try {
@@ -244,7 +244,7 @@ export default function AncestralMatcher({
         setSelectedVaultMember(member);
         setActiveRequestDetails(req);
       } else {
-        setError("Vault member could not be loaded from Firebase partition.");
+        setError("Vault member could not be loaded from the SQL backend.");
       }
     } catch (err: any) {
       setError("Failed to open decrypted vault: " + err.message);

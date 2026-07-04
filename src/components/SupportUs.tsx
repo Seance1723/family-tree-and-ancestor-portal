@@ -12,7 +12,15 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import RazorpayModal from "./RazorpayModal";
-import { db, collection, doc, setDoc } from "../services/firebase";
+
+function getToken() {
+  return localStorage.getItem("ft_auth_token");
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 interface SupportUsProps {
   userEmail: string;
@@ -38,10 +46,7 @@ export default function SupportUs({ userEmail, userId, onClose }: SupportUsProps
     razorpay_signature: string;
   }) => {
     try {
-      // Record the donation in Firestore
       const donationId = "don_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
-      const docRef = doc(collection(db, "donations"), donationId);
-      
       const donationRecord = {
         id: donationId,
         userId: userId,
@@ -53,7 +58,27 @@ export default function SupportUs({ userEmail, userId, onClose }: SupportUsProps
         status: "completed"
       };
 
-      await setDoc(docRef, donationRecord);
+      const res = await fetch("/api/donations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          id: donationId,
+          userId,
+          email: userEmail,
+          amount: currentAmount,
+          currency: "INR",
+          status: "completed",
+          razorpayOrderId: data.razorpay_order_id,
+          razorpayPaymentId: data.razorpay_payment_id,
+          razorpaySignature: data.razorpay_signature,
+          contributedAt: Date.now(),
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to record donation");
+      }
+
       setPaymentDetails(donationRecord);
       setSupportSuccess(true);
     } catch (e) {

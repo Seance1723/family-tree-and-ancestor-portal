@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mail, Shield, FileText, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
-import { db, collection, doc, setDoc } from "../services/firebase";
+import { auth } from "../services/firebase";
 
 export default function SupportAndLegal() {
   const [activeSubTab, setActiveSubTab] = useState<"privacy" | "terms" | "contact">("privacy");
@@ -72,19 +72,25 @@ export default function SupportAndLegal() {
     setIsSubmitting(true);
 
     try {
-      // Secure write to Firestore - allowed under the write-only firestore rule
       const messageId = "msg_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
-      const docRef = doc(collection(db, "contact_messages"), messageId);
-      
-      await setDoc(docRef, {
-        id: messageId,
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        subject: subject.trim(),
-        message: message.trim(),
-        submittedAt: new Date().toISOString(),
-        clientReferrer: "Kinly Web Vault",
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: messageId,
+          userId: auth.currentUser?.uid,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          subject: subject.trim(),
+          message: message.trim(),
+          submittedAt: new Date().toISOString(),
+          clientReferrer: "Kinly Web Vault",
+        }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to send message");
+      }
 
       setSubmitSuccess(true);
       setName("");
@@ -221,7 +227,7 @@ export default function SupportAndLegal() {
               </p>
               <ul className="list-disc pl-5 space-y-1 text-xs text-slate-600">
                 <li><strong>Account Credentials:</strong> Basic OAuth indicators or email hashes used to manage active Cloud sessions.</li>
-                <li><strong>Encrypted Payload:</strong> Sealed symmetric packages stored in our Google Firestore database representing your secure family logs.</li>
+                <li><strong>Encrypted Payload:</strong> Sealed symmetric packages stored in our MySQL SQL backend representing your secure family logs.</li>
                 <li><strong>Support Logs:</strong> Securely submitted contact forms (which are sealed and inaccessible to external clients).</li>
               </ul>
             </div>
@@ -345,7 +351,7 @@ export default function SupportAndLegal() {
                 <div>
                   <h3 className="font-sans font-bold text-slate-900 text-base">Support Message Delivered!</h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Thank you. Your message has been cryptographically logged in our write-only Firestore support inbox. 
+                    Thank you. Your message has been cryptographically logged in our write-only SQL support inbox. 
                     Our team will review your ticket and reach out shortly.
                   </p>
                 </div>

@@ -1,6 +1,6 @@
 /**
  * Lightweight, robust, synchronous client-side encryption utility.
- * Designed to encrypt and decrypt sensitive genealogical and contact information before syncing to Firebase.
+ * Designed to encrypt and decrypt sensitive genealogical and contact information before syncing to the SQL backend.
  * Ensures complete zero-knowledge security so that server owners/third-parties cannot read raw sensitive data.
  */
 

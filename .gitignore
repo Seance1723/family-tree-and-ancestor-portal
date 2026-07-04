@@ -6,3 +6,27 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS / cache
+.cache/
+.temp/
+tmp/
+*.local
+
+# Graphify generated artifacts
+.graphify/
+
+# Firebase legacy artifacts
+.firebase/
+
+# Database / SQLite
+*.db
+*.sqlite
+*.sqlite3

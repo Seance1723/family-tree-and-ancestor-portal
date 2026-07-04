@@ -551,7 +551,7 @@ export default function LandingPage({
             <div className="space-y-2">
               <h4 className="font-sans font-bold text-lg text-white">Zero-Friction Offline Sync</h4>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Work perfectly during travels or in remote regions. Changes persist securely on your local disk database, syncing automatically to Firestore once connection returns.
+                Work perfectly during travels or in remote regions. Changes persist securely on your local disk database, syncing automatically to the SQL backend once connection returns.
               </p>
             </div>
 
@@ -580,7 +580,7 @@ export default function LandingPage({
                   <div className="h-8 w-8 rounded-lg bg-indigo-600/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
                     <Network className="h-4.5 w-4.5" />
                   </div>
-                  <span className="text-[9px] font-mono text-slate-400 mt-1.5 font-bold">Firestore</span>
+                  <span className="text-[9px] font-mono text-slate-400 mt-1.5 font-bold">SQL</span>
                 </div>
               </div>
             </div>
@@ -710,7 +710,7 @@ export default function LandingPage({
               </button>
             </div>
 
-            {/* Real Firebase Google Login button */}
+            {/* Google Login button (disabled in SQL backend) */}
             <button
               id="landing-auth-btn-google"
               onClick={handleGoogleLogin}
