@@ -237,6 +237,149 @@ export default function App() {
   const [reminders, setReminders] = useState<AnniversaryReminder[]>([]);
   const [isAdminMode, setIsAdminMode] = useState(false);
 
+  // Undo/Redo Action History stack (Kinly)
+  const [past, setPast] = useState<FamilyMember[][]>([]);
+  const [future, setFuture] = useState<FamilyMember[][]>([]);
+
+  const saveHistorySnapshot = (customMembers = members) => {
+    const copy = JSON.parse(JSON.stringify(customMembers));
+    setPast((prev) => [...prev, copy]);
+    setFuture([]); // Clear future on new action
+  };
+
+  const applySnapshot = async (targetSnapshot: FamilyMember[]) => {
+    try {
+      // Elements that exist now but are not in the snapshot: delete them
+      const toDelete = members.filter(m => !targetSnapshot.some(ts => ts.id === m.id));
+      for (const m of toDelete) {
+        await removeMember(m);
+      }
+
+      // Elements that are in the snapshot: add or update them
+      for (const m of targetSnapshot) {
+        const current = members.find(cm => cm.id === m.id);
+        if (!current || JSON.stringify(current) !== JSON.stringify(m)) {
+          await addOrUpdateMember(m);
+        }
+      }
+
+      // Reload databases and sync
+      await loadLocalDatabase();
+      if (user) {
+        await triggerSync(user.uid);
+      }
+    } catch (error) {
+      console.error("Error restoring history state snapshot:", error);
+      triggerToast("Error restoring family tree snapshot");
+    }
+  };
+
+  const handleUndo = async () => {
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+
+    setFuture((prev) => [JSON.parse(JSON.stringify(members)), ...prev]);
+    setPast(newPast);
+
+    await applySnapshot(previous);
+    triggerToast("Action undone");
+  };
+
+  const handleRedo = async () => {
+    if (future.length === 0) return;
+    const next = future[0];
+    const newFuture = future.slice(1);
+
+    setPast((prev) => [...prev, JSON.parse(JSON.stringify(members))]);
+    setFuture(newFuture);
+
+    await applySnapshot(next);
+    triggerToast("Action redone");
+  };
+
+  const handleReparent = async (childId: string, parentId: string) => {
+    if (childId === parentId) return;
+
+    const child = members.find(m => m.id === childId);
+    const parent = members.find(m => m.id === parentId);
+    if (!child || !parent) return;
+
+    // Preventive cycle check: parent cannot be a descendant of child
+    const isDescendant = (ancestorId: string, potentialDescendantId: string): boolean => {
+      const ancestor = members.find(m => m.id === ancestorId);
+      if (!ancestor) return false;
+      if (ancestor.children && ancestor.children.includes(potentialDescendantId)) return true;
+      return ancestor.children ? ancestor.children.some(cId => isDescendant(cId, potentialDescendantId)) : false;
+    };
+
+    if (isDescendant(childId, parentId)) {
+      triggerToast("Loop prevented: a descendant cannot be your parent!");
+      return;
+    }
+
+    saveHistorySnapshot();
+
+    try {
+      const updates: FamilyMember[] = [];
+      const gender = parent.gender;
+
+      // Identify any existing parent of the same gender to be replaced
+      const oldParentId = child.parents.find(pid => {
+        const pm = members.find(m => m.id === pid);
+        return pm?.gender === gender;
+      });
+
+      let updatedParents = [...child.parents];
+      if (oldParentId) {
+        updatedParents = updatedParents.filter(id => id !== oldParentId);
+        const oldParent = members.find(m => m.id === oldParentId);
+        if (oldParent) {
+          updates.push({
+            ...oldParent,
+            children: oldParent.children.filter(id => id !== childId)
+          });
+        }
+      }
+
+      if (!updatedParents.includes(parentId)) {
+        updatedParents.push(parentId);
+      }
+
+      let updatedRelationship = child.relationshipToRoot;
+      if (parent.relationshipToRoot.toLowerCase() === "self") {
+        updatedRelationship = parent.gender === Gender.MALE ? "FATHER" : parent.gender === Gender.FEMALE ? "MOTHER" : "PARENT";
+      }
+
+      updates.push({
+        ...child,
+        parents: updatedParents,
+        relationshipToRoot: updatedRelationship
+      });
+
+      if (!parent.children.includes(childId)) {
+        updates.push({
+          ...parent,
+          children: [...parent.children, childId]
+        });
+      }
+
+      // Save connection changes
+      for (const m of updates) {
+        await addOrUpdateMember(m);
+      }
+
+      await loadLocalDatabase();
+      if (user) {
+        await triggerSync(user.uid);
+      }
+      triggerToast(`Successfully re-parented ${child.name} to ${parent.name}`);
+    } catch (err) {
+      console.error("Failed to re-parent family tree member:", err);
+      triggerToast("Failed to re-parent family member");
+    }
+  };
+
   // Subscription / Payment states
   const [subscription, setSubscription] = useState<{
     isPremium: boolean;
@@ -673,6 +816,9 @@ export default function App() {
     e.preventDefault();
     if (!formName.trim() || !user) return;
 
+    // Save history snapshot (Kinly)
+    saveHistorySnapshot();
+
     const newId = "member_" + Math.random().toString(36).substr(2, 9);
     
     // Setup Parent relations automatically if added relative to a source
@@ -761,6 +907,8 @@ export default function App() {
       message: `Are you sure you want to permanently delete ${member.name} and clear all linked nodes?`,
       onConfirm: async () => {
         try {
+          // Save history snapshot (Kinly)
+          saveHistorySnapshot();
           await removeMember(member);
           await loadLocalDatabase();
           setSelectedMemberId(null);
@@ -773,6 +921,8 @@ export default function App() {
 
   const handleDeleteMultipleMembers = async (memberIds: string[]) => {
     try {
+      // Save history snapshot (Kinly)
+      saveHistorySnapshot();
       for (const id of memberIds) {
         const member = members.find((m) => m.id === id);
         if (member) {
@@ -790,6 +940,8 @@ export default function App() {
     try {
       const member = members.find((m) => m.id === memberId);
       if (!member) return;
+      // Save history snapshot (Kinly)
+      saveHistorySnapshot();
       const updatedMember = {
         ...member,
         notes: updatedNotes,
@@ -806,6 +958,8 @@ export default function App() {
     try {
       const member = members.find((m) => m.id === memberId);
       if (!member) return;
+      // Save history snapshot (Kinly)
+      saveHistorySnapshot();
       const updatedMember = {
         ...member,
         photos: updatedPhotos,
@@ -1518,6 +1672,11 @@ export default function App() {
                       onDeleteMembers={handleDeleteMultipleMembers}
                       collapsedBranches={Array.from(collapsedBranches)}
                       onToggleCollapseBranch={handleToggleCollapseBranch}
+                      pastLength={past.length}
+                      futureLength={future.length}
+                      onUndo={handleUndo}
+                      onRedo={handleRedo}
+                      onReparent={handleReparent}
                     />
                   </div>
 

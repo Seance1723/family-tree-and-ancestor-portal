@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { FamilyMember, Gender, PrivacySetting } from "../types";
-import { Plus, User, Heart, ArrowUp, Shield, Download, Trash2, ZoomIn, ZoomOut, Maximize2, FileJson, FileSpreadsheet, Sliders } from "lucide-react";
+import { Plus, User, Heart, ArrowUp, Shield, Download, Trash2, ZoomIn, ZoomOut, Maximize2, FileJson, FileSpreadsheet, Sliders, Undo2, Redo2 } from "lucide-react";
 import { decryptData } from "../utils/crypto";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -14,6 +14,11 @@ interface FamilyTreeRendererProps {
   searchQuery?: string;
   collapsedBranches?: string[];
   onToggleCollapseBranch?: (id: string) => void;
+  pastLength?: number;
+  futureLength?: number;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onReparent?: (childId: string, parentId: string) => Promise<void> | void;
 }
 
 export default function FamilyTreeRenderer({
@@ -26,6 +31,11 @@ export default function FamilyTreeRenderer({
   searchQuery = "",
   collapsedBranches = [],
   onToggleCollapseBranch,
+  pastLength = 0,
+  futureLength = 0,
+  onUndo,
+  onRedo,
+  onReparent,
 }: FamilyTreeRendererProps) {
   // Bulk Delete States
   const [isBulkDeleteMode, setIsBulkDeleteMode] = useState(false);
@@ -41,6 +51,48 @@ export default function FamilyTreeRenderer({
   // Generations Visibility Limit State
   const [ancestorGenerations, setAncestorGenerations] = useState(2); // 0, 1, 2
   const [descendantGenerations, setDescendantGenerations] = useState(1); // 0, 1
+
+  // Drag and drop reparenting states & handlers (Kinly)
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    if (isBulkDeleteMode) return;
+    setDraggedId(id);
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: string) => {
+    if (isBulkDeleteMode) return;
+    e.preventDefault();
+    if (draggedId && draggedId !== id) {
+      setDragOverId(id);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetId: string) => {
+    if (isBulkDeleteMode) return;
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData("text/plain") || draggedId;
+    setDraggedId(null);
+    setDragOverId(null);
+
+    if (sourceId && sourceId !== targetId) {
+      if (onReparent) {
+        await onReparent(sourceId, targetId);
+      }
+    }
+  };
 
   const toggleBulkSelect = (id: string) => {
     setSelectedBulkIds(prev => 
@@ -311,6 +363,12 @@ export default function FamilyTreeRenderer({
         exit={{ opacity: 0, scale: 0.92, y: -5 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
         id={`member-node-${m.id}`}
+        draggable={!isBulkDeleteMode}
+        onDragStart={(e) => handleDragStart(e, m.id)}
+        onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOver(e, m.id)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, m.id)}
         onClick={(e) => {
           if (isBulkDeleteMode) {
             e.stopPropagation();
@@ -320,6 +378,8 @@ export default function FamilyTreeRenderer({
           }
         }}
         className={`h-24 w-44 p-3 rounded-xl border flex flex-col justify-between cursor-pointer transition-all duration-300 relative ${
+          draggedId === m.id ? "opacity-30 scale-95 border-dashed" : ""
+        } ${
           isBulkDeleteMode
             ? isChecked
               ? "border-rose-500 bg-rose-50/60 shadow-md ring-2 ring-rose-500/20 scale-102 z-10"
@@ -331,6 +391,13 @@ export default function FamilyTreeRenderer({
                 : getGenderColor(m.gender) + " hover:shadow-md hover:scale-102"
         }`}
       >
+        {dragOverId === m.id && (
+          <div className="absolute inset-0 bg-indigo-600/10 border-2 border-dashed border-indigo-600 rounded-xl flex items-center justify-center pointer-events-none z-30 animate-pulse">
+            <span className="bg-indigo-600 text-white text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shadow-sm">
+              Make Parent
+            </span>
+          </div>
+        )}
         {isBulkDeleteMode && (
           <div className="absolute top-2 right-2 z-20" onClick={(e) => e.stopPropagation()}>
             <input
@@ -412,6 +479,36 @@ export default function FamilyTreeRenderer({
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Action History Stack controls (Kinly) */}
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 p-1 rounded-xl mr-1">
+            <button
+              id="btn-undo"
+              disabled={pastLength === 0}
+              onClick={onUndo}
+              className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                pastLength > 0
+                  ? "bg-white text-slate-700 hover:bg-slate-100 shadow-xs cursor-pointer border border-slate-200/50"
+                  : "text-slate-300 cursor-not-allowed border border-transparent"
+              }`}
+              title="Undo last change"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              id="btn-redo"
+              disabled={futureLength === 0}
+              onClick={onRedo}
+              className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                futureLength > 0
+                  ? "bg-white text-slate-700 hover:bg-slate-100 shadow-xs cursor-pointer border border-slate-200/50"
+                  : "text-slate-300 cursor-not-allowed border border-transparent"
+              }`}
+              title="Redo next change"
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
           {!isBulkDeleteMode ? (
             <button
               id="btn-enable-bulk"
