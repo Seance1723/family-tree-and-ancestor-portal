@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mail, CheckCircle, AlertTriangle, RefreshCw, Send, ShieldAlert, Clock } from "lucide-react";
-import { auth } from "../services/firebase";
+import { auth } from "../services/auth";
 
 export default function ContactUs() {
   // Contact form state

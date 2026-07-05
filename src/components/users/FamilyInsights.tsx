@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
-import { FamilyMember, Gender, AnniversaryReminder } from "../types";
-import { decryptData } from "../utils/crypto";
+import { FamilyMember, Gender, AnniversaryReminder } from "../../types";
+import { decryptData } from "../../utils/crypto";
 import { 
   BarChart3, 
   Globe, 

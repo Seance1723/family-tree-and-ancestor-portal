@@ -6,6 +6,8 @@ export type User = {
   email: string | null;
   displayName: string | null;
   photoURL?: string | null;
+  isAdmin?: boolean;
+  isActive?: boolean;
 };
 
 export interface UserCredential {
@@ -81,10 +83,7 @@ export const auth = {
   currentUser: getStoredUser(),
 };
 
-export const googleProvider = {} as any;
-
 export async function signInWithEmailAndPassword(
-  _auth: any,
   email: string,
   password: string
 ): Promise<UserCredential> {
@@ -97,6 +96,8 @@ export async function signInWithEmailAndPassword(
     email: data.user.email,
     displayName: data.user.displayName,
     photoURL: null,
+    isAdmin: !!data.user.isAdmin,
+    isActive: data.user.isActive !== false,
   };
   setUser(user);
   notifyListeners(user);
@@ -104,7 +105,6 @@ export async function signInWithEmailAndPassword(
 }
 
 export async function createUserWithEmailAndPassword(
-  _auth: any,
   email: string,
   password: string
 ): Promise<UserCredential> {
@@ -115,13 +115,15 @@ export async function createUserWithEmailAndPassword(
     email: data.user.email,
     displayName: data.user.displayName,
     photoURL: null,
+    isAdmin: !!data.user.isAdmin,
+    isActive: data.user.isActive !== false,
   };
   setUser(user);
   notifyListeners(user);
   return { user };
 }
 
-export async function signOut(_auth?: any): Promise<void> {
+export async function signOut(): Promise<void> {
   try {
     await fetch("/api/auth/logout", { method: "POST", headers: { ...authHeaders() } });
   } catch {
@@ -131,14 +133,7 @@ export async function signOut(_auth?: any): Promise<void> {
   notifyListeners(null);
 }
 
-export function signInWithPopup(_auth: any, _provider: any): Promise<UserCredential> {
-  throw new Error(
-    "Google sign-in is not available in the SQL backend. Please use email/password."
-  );
-}
-
 export function onAuthStateChanged(
-  _auth: any,
   callback: (user: User | null) => void
 ): () => void {
   let cancelled = false;
@@ -165,6 +160,8 @@ export function onAuthStateChanged(
         email: data.email,
         displayName: data.displayName,
         photoURL: null,
+        isAdmin: !!data.isAdmin,
+        isActive: data.isActive !== false,
       };
       setUser(validUser);
       if (!cancelled) callback(validUser);
@@ -180,47 +177,103 @@ export function onAuthStateChanged(
   };
 }
 
-// Stub Firestore-like "db" for the few direct calls in App.tsx
-export const db = { kind: "sql-backend" } as any;
+/* ───────────────────────────── Native DB Helpers ───────────────────────────── */
 
-export function doc(_db: any, collection: string, id: string) {
-  return { collection, id };
-}
-
-export async function getDoc(ref: { collection: string; id: string }): Promise<{ exists(): boolean; data(): any }> {
+export async function getSystemSettings(): Promise<{
+  supportFlowEnabled: boolean;
+  upgradeFlowEnabled: boolean;
+  maxMembersIfUpgradeEnabled: number;
+  freeTierLimit: number;
+  premiumPriceMonthly: number;
+  premiumPriceYearly: number;
+  coupons: any[];
+} | null> {
   try {
-    let data: any;
-    if (ref.collection === "system_settings") {
-      data = await apiGet(`/api/system-settings/${ref.id}`);
-    } else if (ref.collection === "user_subscriptions") {
-      data = await apiGet(`/api/user-subscriptions/${ref.id}`);
-    } else {
-      return { exists: () => false, data: () => null };
+    const res = await apiGet("/api/system-settings/config");
+    if (res.exists) {
+      const rawSup = res.data?.supportFlowEnabled !== false;
+      const rawUpg = res.data?.upgradeFlowEnabled !== false;
+      const sup = rawSup && rawUpg ? true : rawSup;
+      const upg = rawSup && rawUpg ? false : rawUpg;
+      return {
+        supportFlowEnabled: sup,
+        upgradeFlowEnabled: upg,
+        maxMembersIfUpgradeEnabled: res.data?.maxMembersIfUpgradeEnabled ?? 50,
+        freeTierLimit: res.data?.freeTierLimit ?? 3,
+        premiumPriceMonthly: res.data?.premiumPriceMonthly ?? 99,
+        premiumPriceYearly: res.data?.premiumPriceYearly ?? 799,
+        coupons: res.data?.coupons || [],
+      };
     }
-    return {
-      exists: () => data.exists !== false,
-      data: () => data.data || null,
-    };
-  } catch {
-    return { exists: () => false, data: () => null };
+    return null;
+  } catch (err) {
+    console.error("[db] getSystemSettings error:", err);
+    return null;
   }
 }
 
-export async function setDoc(ref: { collection: string; id: string }, data: any): Promise<void> {
-  if (ref.collection === "system_settings") {
-    await apiPost(`/api/system-settings/${ref.id}`, data);
-  } else if (ref.collection === "user_subscriptions") {
-    await apiPost(`/api/user-subscriptions/${ref.id}`, data);
-  } else {
-    throw new Error(`Unknown SQL collection: ${ref.collection}`);
+export async function saveSystemSettings(settings: {
+  supportFlowEnabled: boolean;
+  upgradeFlowEnabled: boolean;
+  maxMembersIfUpgradeEnabled: number;
+}): Promise<void> {
+  await apiPost("/api/system-settings/config", settings);
+}
+
+export async function getUserSubscription(userId: string): Promise<{
+  isPremium: boolean;
+  slots: number;
+  amountPaid: number;
+  paymentStatus: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  expiresAt?: number;
+  history?: any[];
+} | null> {
+  try {
+    const res = await apiGet(`/api/user-subscriptions/${userId}`);
+    if (res.exists && res.data) {
+      const data = res.data;
+      return {
+        isPremium: !!data.isPremium,
+        slots: data.slots || 0,
+        amountPaid: data.amountPaid || 0,
+        paymentStatus: data.paymentStatus || "",
+        razorpayOrderId: data.razorpayOrderId || "",
+        razorpayPaymentId: data.razorpayPaymentId || "",
+        expiresAt: data.expiresAt,
+        history: data.history || [],
+      };
+    }
+    return null;
+  } catch (err) {
+    console.error("[db] getUserSubscription error:", err);
+    return null;
   }
 }
 
-// No-op re-exports kept only to satisfy legacy imports; they should not be used.
-export function collection() { return {}; }
-export function getDocs() { return Promise.resolve({ forEach: () => {}, docs: [] }); }
-export function deleteDoc() { return Promise.resolve(); }
-export function query() { return {}; }
-export function where() { return {}; }
-export function writeBatch() { return { set: () => {}, commit: () => Promise.resolve() }; }
-export function updateDoc() { return Promise.resolve(); }
+export async function saveUserSubscription(userId: string, subscription: any): Promise<void> {
+  await apiPost(`/api/user-subscriptions/${userId}`, {
+    ...subscription,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function getUserDonations(): Promise<{
+  id: string;
+  userId: string;
+  email: string;
+  amount: number;
+  currency: string;
+  status: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  createdAt: number;
+}[]> {
+  try {
+    return await apiGet("/api/donations");
+  } catch (err) {
+    console.error("[db] getUserDonations error:", err);
+    return [];
+  }
+}

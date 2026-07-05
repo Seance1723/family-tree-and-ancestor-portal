@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { HistoricalDocument, FamilyMember } from "../types";
+import { HistoricalDocument, FamilyMember } from "../../types";
 import { FileText, Plus, Trash2, Calendar, Tag, Image as ImageIcon, Link, Search } from "lucide-react";
 
 interface DocumentManagerProps {

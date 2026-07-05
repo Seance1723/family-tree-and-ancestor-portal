@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   google_id VARCHAR(255) DEFAULT NULL,
   created_at BIGINT NOT NULL,
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   INDEX idx_users_email (email),
   INDEX idx_users_google_id (google_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

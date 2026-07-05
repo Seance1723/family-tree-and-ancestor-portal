@@ -221,3 +221,186 @@ export function exportFamilyReportPDF(
   const filename = `${member.name.replace(/\s+/g, "_")}_Family_Report.pdf`;
   doc.save(filename);
 }
+
+export function exportInvoicePDF(payment: {
+  invoiceId: string;
+  type: "Subscription" | "Donation";
+  amount: number;
+  date: number;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  userEmail: string;
+  displayName?: string;
+  slots?: number;
+}) {
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const marginX = 20;
+  const contentWidth = 170;
+
+  // Header Background Decoration
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.roundedRect(15, 12, 180, 24, 2, 2, "F");
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(15, 12, 180, 24, 2, 2, "S");
+
+  // Title
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(15, 23, 42);
+  doc.text("INVOICE / RECEIPT", 20, 22);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Official Payment Voucher • Generated on ${new Date().toLocaleDateString()}`, 20, 27);
+
+  // Logo Badge on Header Right
+  doc.setFillColor(254, 243, 199); // amber-100
+  doc.roundedRect(150, 16, 40, 16, 2, 2, "F");
+  doc.setDrawColor(251, 191, 36); // amber-400
+  doc.roundedRect(150, 16, 40, 16, 2, 2, "S");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(180, 83, 9); // amber-700
+  doc.text("KINLY VAULT", 155, 26);
+
+  let y = 48;
+
+  // Invoice Details Metadata
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(37, 99, 235); // blue-600
+  doc.text("INVOICE METADATA", marginX, y);
+  
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.5);
+  doc.line(marginX, y + 2, marginX + contentWidth, y + 2);
+  y += 8;
+
+  // Metadata Fields
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text("INVOICE NUMBER", marginX, y);
+  doc.text("TRANSACTION DATE", marginX + 85, y);
+  
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(51, 65, 85);
+  doc.text(payment.invoiceId, marginX, y + 5);
+  doc.text(new Date(payment.date).toLocaleString(), marginX + 85, y + 5);
+  y += 14;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text("RAZORPAY ORDER ID", marginX, y);
+  doc.text("RAZORPAY PAYMENT ID", marginX + 85, y);
+  
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(51, 65, 85);
+  doc.text(payment.razorpayOrderId || "N/A", marginX, y + 5);
+  doc.text(payment.razorpayPaymentId || "N/A", marginX + 85, y + 5);
+  y += 18;
+
+  // Billing Party Details
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(37, 99, 235);
+  doc.text("BILL TO (PAYER)", marginX, y);
+  doc.line(marginX, y + 2, marginX + contentWidth, y + 2);
+  y += 8;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text("PAYER EMAIL", marginX, y);
+  doc.text("ACCOUNT NAME", marginX + 85, y);
+  
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(51, 65, 85);
+  doc.text(payment.userEmail, marginX, y + 5);
+  doc.text(payment.displayName || payment.userEmail.split("@")[0], marginX + 85, y + 5);
+  y += 18;
+
+  // Invoice Items Table
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(37, 99, 235);
+  doc.text("LINE ITEMS", marginX, y);
+  doc.line(marginX, y + 2, marginX + contentWidth, y + 2);
+  y += 8;
+
+  // Table Headers
+  doc.setFillColor(241, 245, 249); // slate-100
+  doc.rect(marginX, y, contentWidth, 7, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text("DESCRIPTION", marginX + 3, y + 5);
+  doc.text("QTY", marginX + 110, y + 5);
+  doc.text("UNIT PRICE", marginX + 130, y + 5);
+  doc.text("TOTAL", marginX + 152, y + 5);
+  y += 7;
+
+  // Line Item Data
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(51, 65, 85);
+  
+  const desc = payment.type === "Subscription"
+    ? `Kinly Premium Subscription Upgrade (${payment.slots || 50} Tree Slots Allocated)`
+    : `Support Contribution - General Donation for Platform Operations`;
+  
+  doc.text(desc, marginX + 3, y + 6);
+  doc.text("1", marginX + 112, y + 6);
+  doc.text(`INR ${payment.amount}`, marginX + 130, y + 6);
+  doc.text(`INR ${payment.amount}`, marginX + 152, y + 6);
+  
+  doc.setDrawColor(241, 245, 249);
+  doc.line(marginX, y + 9, marginX + contentWidth, y + 9);
+  y += 16;
+
+  // Total Paid
+  doc.setFillColor(248, 250, 252);
+  doc.rect(marginX + 95, y, 75, 20, "F");
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(marginX + 95, y, 75, 20, "S");
+  
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text("SUBTOTAL:", marginX + 99, y + 6);
+  doc.text(`INR ${payment.amount}`, marginX + 139, y + 6);
+
+  doc.text("TAXES (0%):", marginX + 99, y + 11);
+  doc.text("INR 0.00", marginX + 139, y + 11);
+
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text("TOTAL PAID:", marginX + 99, y + 16);
+  doc.text(`INR ${payment.amount}`, marginX + 139, y + 16);
+  y += 32;
+
+  // Invoice Footer
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.5);
+  doc.line(marginX, 265, marginX + contentWidth, 265);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text("Kinly Zero-Knowledge Family Vault Platform", marginX, 270);
+  doc.text("This is a computer-generated voucher and serves as an official receipt of transaction.", marginX, 274);
+  doc.text("If you have questions regarding this receipt, please submit a ticket in the Support tab.", marginX, 278);
+
+  const filename = `${payment.invoiceId}.pdf`;
+  doc.save(filename);
+}

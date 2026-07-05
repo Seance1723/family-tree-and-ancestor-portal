@@ -58,7 +58,7 @@ async function isAdmin(req: express.Request): Promise<boolean> {
   const user = (req as any).user as { userId: string; email: string } | undefined;
   if (!user) return false;
   const [rows] = await pool.query("SELECT is_admin FROM users WHERE id = ?", [user.userId]) as any[];
-  return rows.length > 0 && rows[0].is_admin === 1;
+  return rows.length > 0 && !!rows[0].is_admin;
 }
 
 // Helpers for JSON columns
@@ -155,6 +155,35 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Run schema migration checks
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'is_active'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE");
+      console.log("[db] Added column 'is_active' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'is_active' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'is_admin'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE");
+      console.log("[db] Added column 'is_admin' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'is_admin' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM contact_messages LIKE 'name'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE contact_messages ADD COLUMN name VARCHAR(255) DEFAULT NULL AFTER user_id");
+      console.log("[db] Added column 'name' to 'contact_messages' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'name' column:", error);
+  }
+
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -190,7 +219,7 @@ async function startServer() {
         [id, email, hash, displayName || null, now]
       );
       const token = jwt.sign({ userId: id, email }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ user: { id, email, displayName: displayName || null }, token });
+      res.json({ user: { id, email, displayName: displayName || null, isAdmin: false, isActive: true }, token });
     } catch (error: any) {
       console.error("Register error:", error);
       res.status(500).json({ error: error.message || "Registration failed" });
@@ -208,13 +237,16 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       const user = rows[0];
+      if (!user.is_active) {
+        return res.status(403).json({ error: "Account deactivated. Please contact support." });
+      }
       const valid = await bcrypt.compare(password, user.password_hash);
       if (!valid) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
       res.json({
-        user: { id: user.id, email: user.email, displayName: user.display_name },
+        user: { id: user.id, email: user.email, displayName: user.display_name, isAdmin: !!user.is_admin, isActive: true },
         token,
       });
     } catch (error: any) {
@@ -226,11 +258,15 @@ async function startServer() {
   app.get("/api/auth/me", authenticate, async (req, res) => {
     try {
       const user = (req as any).user as { userId: string; email: string };
-      const [rows] = await pool.query("SELECT id, email, display_name FROM users WHERE id = ?", [user.userId]) as any[];
+      const [rows] = await pool.query("SELECT id, email, display_name, is_admin, is_active FROM users WHERE id = ?", [user.userId]) as any[];
       if (rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json({ id: rows[0].id, email: rows[0].email, displayName: rows[0].display_name });
+      const dbUser = rows[0];
+      if (!dbUser.is_active) {
+        return res.status(403).json({ error: "Account deactivated" });
+      }
+      res.json({ id: dbUser.id, email: dbUser.email, displayName: dbUser.display_name, isAdmin: !!dbUser.is_admin, isActive: !!dbUser.is_active });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch user" });
     }
@@ -622,12 +658,42 @@ async function startServer() {
   app.post("/api/user-subscriptions/:userId", authenticate, async (req, res) => {
     try {
       const userId = req.params.userId;
-      const data = req.body;
+      const newData = req.body;
       const now = Date.now();
+
+      // Load existing subscription to preserve history
+      const [existing] = await pool.query("SELECT data FROM user_subscriptions WHERE user_id = ?", [userId]) as any[];
+      let history: any[] = [];
+      if (existing.length > 0) {
+        const oldData = parseJson(existing[0].data);
+        if (oldData && Array.isArray(oldData.history)) {
+          history = oldData.history;
+        }
+      }
+
+      // If it is a successful payment, log transaction in history
+      if (newData.paymentStatus === "paid" && newData.razorpayPaymentId) {
+        const exists = history.some((h: any) => h.razorpayPaymentId === newData.razorpayPaymentId);
+        if (!exists) {
+          const invoiceId = `INV-SUB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+          history.push({
+            invoiceId,
+            amount: Number(newData.amountPaid),
+            slots: newData.slots,
+            date: now,
+            razorpayOrderId: newData.razorpayOrderId,
+            razorpayPaymentId: newData.razorpayPaymentId,
+            status: newData.paymentStatus
+          });
+        }
+      }
+
+      newData.history = history;
+
       await pool.query(
         `INSERT INTO user_subscriptions (user_id, data, updated_at) VALUES (?, ?, ?)
          ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)`,
-        [userId, stringifyJson(data), now]
+        [userId, stringifyJson(newData), now]
       );
       res.json({ saved: true });
     } catch (error: any) {
@@ -656,6 +722,29 @@ async function startServer() {
     }
   });
 
+  app.get("/api/donations", authenticate, async (req, res) => {
+    try {
+      const userId = (req as any).user.userId;
+      const [rows] = await pool.query(
+        "SELECT * FROM donations WHERE user_id = ? ORDER BY created_at DESC",
+        [userId]
+      ) as any[];
+      res.json(rows.map((r: any) => ({
+        id: r.id,
+        userId: r.user_id,
+        email: r.email,
+        amount: Number(r.amount),
+        currency: r.currency,
+        status: r.status,
+        razorpayOrderId: r.razorpay_order_id,
+        razorpayPaymentId: r.razorpay_payment_id,
+        createdAt: Number(r.created_at)
+      })));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch user donations" });
+    }
+  });
+
   app.post("/api/donations", authenticate, async (req, res) => {
     try {
       const userId = (req as any).user.userId;
@@ -676,11 +765,50 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   // ADMIN DASHBOARD
   // ---------------------------------------------------------------------------
+  app.get("/api/admin/stats", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const [[usersCount]] = await pool.query("SELECT COUNT(*) as cnt FROM users") as any[];
+      const [[adminsCount]] = await pool.query("SELECT COUNT(*) as cnt FROM users WHERE is_admin = 1") as any[];
+      const [[activeCount]] = await pool.query("SELECT COUNT(*) as cnt FROM users WHERE is_active = 1") as any[];
+      const [[membersCount]] = await pool.query("SELECT COUNT(*) as cnt FROM family_members") as any[];
+      const [[docsCount]] = await pool.query("SELECT COUNT(*) as cnt FROM historical_documents") as any[];
+      const [[messagesCount]] = await pool.query("SELECT COUNT(*) as cnt FROM contact_messages") as any[];
+      const [[openMessagesCount]] = await pool.query("SELECT COUNT(*) as cnt FROM contact_messages WHERE status = 'open'") as any[];
+      const [[donationsSum]] = await pool.query("SELECT COALESCE(SUM(amount), 0) as total FROM donations WHERE status = 'completed'") as any[];
+      const [[donationsCount]] = await pool.query("SELECT COUNT(*) as cnt FROM donations") as any[];
+      const [[subsCount]] = await pool.query("SELECT COUNT(*) as cnt FROM user_subscriptions") as any[];
+      const [[privPub]] = await pool.query("SELECT COUNT(*) as cnt FROM family_members WHERE privacy = 'public'") as any[];
+      const [[privFam]] = await pool.query("SELECT COUNT(*) as cnt FROM family_members WHERE privacy = 'family'") as any[];
+      const [[privPriv]] = await pool.query("SELECT COUNT(*) as cnt FROM family_members WHERE privacy = 'private'") as any[];
+
+      res.json({
+        totalUsers: Number(usersCount.cnt),
+        totalAdmins: Number(adminsCount.cnt),
+        activeUsers: Number(activeCount.cnt),
+        totalMembers: Number(membersCount.cnt),
+        totalDocuments: Number(docsCount.cnt),
+        totalMessages: Number(messagesCount.cnt),
+        openMessages: Number(openMessagesCount.cnt),
+        totalRevenue: Number(donationsSum.total),
+        totalDonations: Number(donationsCount.cnt),
+        totalSubscriptions: Number(subsCount.cnt),
+        privacyDistribution: {
+          public: Number(privPub.cnt),
+          family: Number(privFam.cnt),
+          private: Number(privPriv.cnt),
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load stats" });
+    }
+  });
+
   app.get("/api/admin/contact-messages", authenticate, async (req, res) => {
     if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
     try {
       const [rows] = await pool.query("SELECT * FROM contact_messages ORDER BY created_at DESC") as any[];
-      res.json(rows.map((r: any) => ({ id: r.id, email: r.email, subject: r.subject, message: r.message, status: r.status, createdAt: Number(r.created_at) })));
+      res.json(rows.map((r: any) => ({ id: r.id, name: r.name || 'Anonymous', email: r.email, subject: r.subject, message: r.message, status: r.status, createdAt: Number(r.created_at) })));
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to load messages" });
     }
@@ -744,6 +872,92 @@ async function startServer() {
       res.json(rows.map((r: any) => ({ id: r.id, userId: r.user_id, email: r.email, amount: r.amount, currency: r.currency, status: r.status, createdAt: Number(r.created_at) })));
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to load donations" });
+    }
+  });
+
+  app.get("/api/admin/users", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const [rows] = await pool.query(
+        "SELECT id, email, display_name AS displayName, google_id AS googleId, created_at AS createdAt, is_admin AS isAdmin, is_active AS isActive FROM users ORDER BY created_at DESC"
+      ) as any[];
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load users" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/admin", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const { isAdmin } = req.body;
+      await pool.query("UPDATE users SET is_admin = ? WHERE id = ?", [isAdmin ? 1 : 0, req.params.id]);
+      res.json({ updated: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update role" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/status", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const { isActive } = req.body;
+      await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [isActive ? 1 : 0, req.params.id]);
+      res.json({ updated: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update status" });
+    }
+  });
+
+  app.get("/api/admin/db-health", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const tables = ["users", "family_members", "historical_documents", "anniversary_reminders", "lineage_access_requests", "system_settings", "user_subscriptions", "contact_messages", "donations"];
+      const results: any[] = [];
+      for (const table of tables) {
+        try {
+          const [[row]] = await pool.query(`SELECT COUNT(*) as cnt FROM ${table}`) as any[];
+          results.push({ table, rows: Number(row.cnt), status: "ok" });
+        } catch {
+          results.push({ table, rows: 0, status: "error" });
+        }
+      }
+      res.json({ status: "healthy", tables: results, timestamp: Date.now() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Health check failed" });
+    }
+  });
+
+  app.get("/api/admin/activity", authenticate, async (req, res) => {
+    if (!(await isAdmin(req))) return res.status(403).json({ error: "Forbidden" });
+    try {
+      // Get recent users
+      const [recentUsers] = await pool.query(
+        "SELECT id, email, display_name, created_at FROM users ORDER BY created_at DESC LIMIT 10"
+      ) as any[];
+      // Get recent members
+      const [recentMembers] = await pool.query(
+        "SELECT fm.id, fm.name, fm.created_at, u.email as owner_email FROM family_members fm LEFT JOIN users u ON fm.user_id = u.id ORDER BY fm.created_at DESC LIMIT 10"
+      ) as any[];
+      // Get recent donations
+      const [recentDonations] = await pool.query(
+        "SELECT id, email, amount, currency, status, created_at FROM donations ORDER BY created_at DESC LIMIT 10"
+      ) as any[];
+
+      const activity: any[] = [];
+      for (const u of recentUsers) {
+        activity.push({ type: "user_registered", description: `${u.email} registered`, timestamp: Number(u.created_at) });
+      }
+      for (const m of recentMembers) {
+        activity.push({ type: "member_added", description: `"${m.name}" added by ${m.owner_email || "unknown"}`, timestamp: Number(m.created_at) });
+      }
+      for (const d of recentDonations) {
+        activity.push({ type: "donation", description: `${d.email} donated ${d.amount} ${d.currency} (${d.status})`, timestamp: Number(d.created_at) });
+      }
+      activity.sort((a: any, b: any) => b.timestamp - a.timestamp);
+      res.json(activity.slice(0, 20));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load activity" });
     }
   });
 

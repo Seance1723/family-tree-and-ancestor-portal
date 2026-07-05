@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mail, Shield, FileText, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
-import { auth } from "../services/firebase";
+import { auth } from "../services/auth";
 
 export default function SupportAndLegal() {
   const [activeSubTab, setActiveSubTab] = useState<"privacy" | "terms" | "contact">("privacy");

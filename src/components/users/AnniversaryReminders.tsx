@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
-import { AnniversaryReminder, FamilyMember } from "../types";
+import { AnniversaryReminder, FamilyMember } from "../../types";
 import { Plus, Bell, Calendar, Trash2, Gift, Heart, User, Clock } from "lucide-react";
-import { decryptData } from "../utils/crypto";
+import { decryptData } from "../../utils/crypto";
 
 interface AnniversaryRemindersProps {
   reminders: AnniversaryReminder[];

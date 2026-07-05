@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FamilyMember, ConnectionMatch, MatchingResult, LineageAccessRequest } from "../types";
+import { FamilyMember, ConnectionMatch, MatchingResult, LineageAccessRequest } from "../../types";
 import { 
   Search, Zap, Network, Sparkles, CheckCircle2, RefreshCw, UserCheck, 
   HelpCircle, Share2, Shield, ShieldCheck, Lock, Unlock, Mail, Phone, MapPin, 
@@ -13,8 +13,8 @@ import {
   fetchFamilyMemberById,
   seedPlaygroundTrees,
   isOnline
-} from "../services/syncService";
-import { decryptData } from "../utils/crypto";
+} from "../../services/syncService";
+import { decryptData } from "../../utils/crypto";
 
 interface AncestralMatcherProps {
   userMembers: FamilyMember[];

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
-import { FamilyMember, Gender, PrivacySetting } from "../types";
+import { FamilyMember, Gender, PrivacySetting } from "../../types";
 import { Plus, User, Heart, ArrowUp, Shield, Download, Trash2, ZoomIn, ZoomOut, Maximize2, FileJson, FileSpreadsheet, Sliders, Undo2, Redo2 } from "lucide-react";
-import { decryptData } from "../utils/crypto";
+import { decryptData } from "../../utils/crypto";
 import { motion, AnimatePresence } from "motion/react";
 
 interface FamilyTreeRendererProps {
