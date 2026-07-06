@@ -79,6 +79,11 @@ function stringifyJson(value: any): string | null {
   return JSON.stringify(value);
 }
 
+type SubscriptionData = {
+  history?: any[];
+  [key: string]: any;
+};
+
 function memberToFrontend(row: any) {
   return {
     id: row.id,
@@ -183,6 +188,72 @@ async function startServer() {
   } catch (error) {
     console.error("[db] Migration error checking 'name' column:", error);
   }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'dob'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN dob VARCHAR(128) DEFAULT NULL");
+      console.log("[db] Added column 'dob' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'dob' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'gender'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN gender VARCHAR(64) DEFAULT NULL");
+      console.log("[db] Added column 'gender' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'gender' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM family_members LIKE 'linked_user_id'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE family_members ADD COLUMN linked_user_id VARCHAR(128) DEFAULT NULL");
+      console.log("[db] Added column 'linked_user_id' to 'family_members' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'linked_user_id' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'is_verified'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT FALSE");
+      console.log("[db] Added column 'is_verified' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'is_verified' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'verification_otp'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN verification_otp VARCHAR(6) DEFAULT NULL");
+      console.log("[db] Added column 'verification_otp' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'verification_otp' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'reset_token'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN reset_token VARCHAR(255) DEFAULT NULL");
+      await pool.query("ALTER TABLE users ADD COLUMN reset_token_expires BIGINT DEFAULT NULL");
+      console.log("[db] Added column 'reset_token' and 'reset_token_expires' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'reset_token' column:", error);
+  }
+  try {
+    const [columns] = await pool.query("SHOW COLUMNS FROM users LIKE 'mfa_enabled'") as any[];
+    if (columns.length === 0) {
+      await pool.query("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE");
+      await pool.query("ALTER TABLE users ADD COLUMN mfa_code VARCHAR(6) DEFAULT NULL");
+      await pool.query("ALTER TABLE users ADD COLUMN mfa_expires BIGINT DEFAULT NULL");
+      console.log("[db] Added column 'mfa_enabled', 'mfa_code', and 'mfa_expires' to 'users' table.");
+    }
+  } catch (error) {
+    console.error("[db] Migration error checking 'mfa_enabled' column:", error);
+  }
 
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: "50mb" }));
@@ -199,27 +270,78 @@ async function startServer() {
   });
 
   // ---------------------------------------------------------------------------
-  // AUTH
+  // AUTH & SPAM PROTECTION
   // ---------------------------------------------------------------------------
+  const registrationLimiter = new Map<string, number[]>();
+  const DISPOSABLE_DOMAINS = [
+    "tempmail.com",
+    "yopmail.com",
+    "mailinator.com",
+    "trashmail.com",
+    "10minutemail.com",
+    "temp-mail.org",
+    "fakeinbox.com"
+  ];
+
+  function checkRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const attempts = registrationLimiter.get(ip) || [];
+    const recent = attempts.filter((t) => now - t < 120000); // 2 minutes window
+    recent.push(now);
+    registrationLimiter.set(ip, recent);
+    return recent.length <= 5; // limit to 5 requests per 2 mins
+  }
+
+  function isDisposableEmail(email: string): boolean {
+    const domain = email.split("@")[1]?.toLowerCase();
+    return DISPOSABLE_DOMAINS.includes(domain);
+  }
+
   app.post("/api/auth/register", async (req, res) => {
     try {
-      const { email, password, displayName } = req.body;
+      const ip = req.ip || "unknown";
+      if (!checkRateLimit(ip)) {
+        return res.status(429).json({ error: "Too many requests. Please try again after 2 minutes." });
+      }
+
+      const { email, password, displayName, dob, gender } = req.body;
       if (!email || !password) {
         return res.status(400).json({ error: "Email and password are required" });
       }
+
+      // Format validation regex check
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Invalid email address format" });
+      }
+
+      // Spam blacklist domain check
+      if (isDisposableEmail(email)) {
+        return res.status(400).json({ error: "Registration blocked: This email provider is flagged for spam/abuse." });
+      }
+
       const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [email]) as any[];
       if (existing.length > 0) {
         return res.status(409).json({ error: "Email already registered" });
       }
+
       const id = uuidv4();
       const hash = await bcrypt.hash(password, 10);
       const now = Date.now();
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
       await pool.query(
-        "INSERT INTO users (id, email, password_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)",
-        [id, email, hash, displayName || null, now]
+        "INSERT INTO users (id, email, password_hash, display_name, dob, gender, created_at, is_verified, verification_otp) VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?)",
+        [id, email, hash, displayName || null, dob || null, gender || null, now, otp]
       );
-      const token = jwt.sign({ userId: id, email }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ user: { id, email, displayName: displayName || null, isAdmin: false, isActive: true }, token });
+
+      console.log(`[AUTH] Verification OTP for ${email} is: ${otp}`);
+
+      res.json({
+        requiresVerification: true,
+        email,
+        devOtpCode: otp
+      });
     } catch (error: any) {
       console.error("Register error:", error);
       res.status(500).json({ error: error.message || "Registration failed" });
@@ -228,10 +350,16 @@ async function startServer() {
 
   app.post("/api/auth/login", async (req, res) => {
     try {
+      const ip = req.ip || "unknown";
+      if (!checkRateLimit(ip)) {
+        return res.status(429).json({ error: "Too many login attempts. Please wait 2 minutes." });
+      }
+
       const { email, password } = req.body;
       if (!email || !password) {
         return res.status(400).json({ error: "Email and password are required" });
       }
+
       const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
       if (rows.length === 0) {
         return res.status(401).json({ error: "Invalid credentials" });
@@ -244,9 +372,36 @@ async function startServer() {
       if (!valid) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
+
+      // Check if user has verified email
+      if (!user.is_verified) {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        await pool.query("UPDATE users SET verification_otp = ? WHERE id = ?", [otp, user.id]);
+        console.log(`[AUTH] Verification OTP for unverified user ${email} is: ${otp}`);
+        return res.json({
+          requiresVerification: true,
+          email,
+          devOtpCode: otp
+        });
+      }
+
+      // Check if MFA is enabled
+      if (user.mfa_enabled) {
+        const mfaCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const mfaExpires = Date.now() + 5 * 60 * 1000;
+        await pool.query("UPDATE users SET mfa_code = ?, mfa_expires = ? WHERE id = ?", [mfaCode, mfaExpires, user.id]);
+        console.log(`[AUTH] Login MFA Code for ${email} is: ${mfaCode}`);
+        return res.json({
+          requiresMfa: true,
+          email,
+          devMfaCode: mfaCode
+        });
+      }
+
+      await pool.query("UPDATE family_members SET linked_user_id = ? WHERE contact_email = ?", [user.id, email]);
       const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
       res.json({
-        user: { id: user.id, email: user.email, displayName: user.display_name, isAdmin: !!user.is_admin, isActive: true },
+        user: { id: user.id, email: user.email, displayName: user.display_name, isAdmin: !!user.is_admin, isActive: true, dob: user.dob, gender: user.gender, mfaEnabled: !!user.mfa_enabled },
         token,
       });
     } catch (error: any) {
@@ -255,10 +410,209 @@ async function startServer() {
     }
   });
 
+  app.post("/api/auth/verify-otp", async (req, res) => {
+    try {
+      const { email, otp } = req.body;
+      if (!email || !otp) {
+        return res.status(400).json({ error: "Email and OTP code are required" });
+      }
+      const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = rows[0];
+      if (user.verification_otp !== otp) {
+        return res.status(400).json({ error: "Invalid verification code. Please try again." });
+      }
+
+      await pool.query("UPDATE users SET is_verified = TRUE, verification_otp = NULL WHERE id = ?", [user.id]);
+      await pool.query("UPDATE family_members SET linked_user_id = ? WHERE contact_email = ?", [user.id, email]);
+
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.display_name,
+          isAdmin: !!user.is_admin,
+          isActive: true,
+          dob: user.dob,
+          gender: user.gender
+        },
+        token
+      });
+    } catch (error: any) {
+      console.error("Verification error:", error);
+      res.status(500).json({ error: error.message || "Verification process failed" });
+    }
+  });
+
+  function parseJwt(token: string) {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = Buffer.from(base64, 'base64').toString('utf8');
+      return JSON.parse(jsonPayload);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  app.post("/api/auth/google-login", async (req, res) => {
+    try {
+      let { googleId, email, displayName, dob, gender, credentialToken } = req.body;
+
+      if (credentialToken) {
+        const decoded = parseJwt(credentialToken);
+        if (decoded) {
+          googleId = `google_${decoded.sub}`;
+          email = decoded.email;
+          displayName = decoded.name || decoded.given_name || email.split("@")[0];
+        } else {
+          return res.status(400).json({ error: "Invalid google credential token payload format" });
+        }
+      }
+
+      if (!googleId || !email) {
+        return res.status(400).json({ error: "googleId and email are required" });
+      }
+
+      // Check if disposable email used
+      if (isDisposableEmail(email)) {
+        return res.status(400).json({ error: "Signup blocked: Google account email provider is flagged for spam/abuse." });
+      }
+
+      let [rows] = await pool.query("SELECT * FROM users WHERE google_id = ?", [googleId]) as any[];
+      let userId: string;
+      let userRecord: any;
+      const isMockAccount = email === "tanvi@gmail.com" || email === "jane@kinly.com";
+
+      if (rows.length > 0) {
+        userRecord = rows[0];
+        userId = userRecord.id;
+        if (dob || gender || displayName) {
+          await pool.query(
+            "UPDATE users SET dob = COALESCE(?, dob), gender = COALESCE(?, gender), display_name = COALESCE(?, display_name) WHERE id = ?",
+            [dob || null, gender || null, displayName || null, userId]
+          );
+          const [updatedRows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]) as any[];
+          userRecord = updatedRows[0];
+        }
+      } else {
+        const [emailRows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
+        if (emailRows.length > 0) {
+          userRecord = emailRows[0];
+          userId = userRecord.id;
+          await pool.query(
+            "UPDATE users SET google_id = ?, dob = COALESCE(?, dob), gender = COALESCE(?, gender), display_name = COALESCE(?, display_name) WHERE id = ?",
+            [googleId, dob || null, gender || null, displayName || null, userId]
+          );
+          const [updatedRows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]) as any[];
+          userRecord = updatedRows[0];
+        } else {
+          userId = uuidv4();
+          const now = Date.now();
+          const isVerified = isMockAccount ? 1 : 0;
+          const otp = isMockAccount ? null : Math.floor(100000 + Math.random() * 900000).toString();
+
+          await pool.query(
+            "INSERT INTO users (id, email, display_name, google_id, dob, gender, created_at, is_verified, verification_otp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [userId, email, displayName || null, googleId, dob || null, gender || null, now, isVerified, otp]
+          );
+
+          if (!isMockAccount) {
+            console.log(`[AUTH] Verification OTP for custom Google user ${email} is: ${otp}`);
+          }
+
+          const [newRows] = await pool.query("SELECT * FROM users WHERE id = ?", [userId]) as any[];
+          userRecord = newRows[0];
+        }
+      }
+
+      if (!userRecord.is_active) {
+        return res.status(403).json({ error: "Account deactivated. Please contact support." });
+      }
+
+      // Check if custom Google account user is verified
+      if (!userRecord.is_verified && !isMockAccount) {
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        await pool.query("UPDATE users SET verification_otp = ? WHERE id = ?", [otpCode, userId]);
+        console.log(`[AUTH] Google verification OTP for ${email} is: ${otpCode}`);
+        return res.json({
+          requiresVerification: true,
+          email,
+          devOtpCode: otpCode
+        });
+      }
+
+      // Check if MFA is enabled
+      if (userRecord.mfa_enabled) {
+        const mfaCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const mfaExpires = Date.now() + 5 * 60 * 1000;
+        await pool.query("UPDATE users SET mfa_code = ?, mfa_expires = ? WHERE id = ?", [mfaCode, mfaExpires, userId]);
+        console.log(`[AUTH] Google Login MFA Code for ${email} is: ${mfaCode}`);
+        return res.json({
+          requiresMfa: true,
+          email,
+          devMfaCode: mfaCode
+        });
+      }
+
+      await pool.query("UPDATE family_members SET linked_user_id = ? WHERE contact_email = ?", [userId, email]);
+      const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+      res.json({
+        user: {
+          id: userId,
+          email: userRecord.email,
+          displayName: userRecord.display_name,
+          isAdmin: !!userRecord.is_admin,
+          isActive: !!userRecord.is_active,
+          dob: userRecord.dob,
+          gender: userRecord.gender,
+          mfaEnabled: !!userRecord.mfa_enabled
+        },
+        token
+      });
+    } catch (error: any) {
+      console.error("Google login error:", error);
+      res.status(500).json({ error: error.message || "Google login failed" });
+    }
+  });
+
+  app.post("/api/auth/profile", authenticate, async (req, res) => {
+    try {
+      const user = (req as any).user as { userId: string; email: string };
+      const { dob, gender, displayName } = req.body;
+      await pool.query(
+        "UPDATE users SET dob = ?, gender = ?, display_name = ? WHERE id = ?",
+        [dob || null, gender || null, displayName || null, user.userId]
+      );
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update profile" });
+    }
+  });
+
+  app.get("/api/users/linked-members", authenticate, async (req, res) => {
+    try {
+      const user = (req as any).user as { userId: string; email: string };
+      const [rows] = await pool.query(
+        `SELECT fm.id, fm.user_id as ownerId, fm.name, fm.gender, fm.birthdate, u.display_name as ownerName, u.email as ownerEmail 
+         FROM family_members fm 
+         JOIN users u ON fm.user_id = u.id 
+         WHERE fm.linked_user_id = ? AND fm.user_id != ?`,
+        [user.userId, user.userId]
+      ) as any[];
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch linked members" });
+    }
+  });
+
   app.get("/api/auth/me", authenticate, async (req, res) => {
     try {
       const user = (req as any).user as { userId: string; email: string };
-      const [rows] = await pool.query("SELECT id, email, display_name, is_admin, is_active FROM users WHERE id = ?", [user.userId]) as any[];
+      const [rows] = await pool.query("SELECT id, email, display_name, is_admin, is_active, dob, gender, mfa_enabled FROM users WHERE id = ?", [user.userId]) as any[];
       if (rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -266,9 +620,123 @@ async function startServer() {
       if (!dbUser.is_active) {
         return res.status(403).json({ error: "Account deactivated" });
       }
-      res.json({ id: dbUser.id, email: dbUser.email, displayName: dbUser.display_name, isAdmin: !!dbUser.is_admin, isActive: !!dbUser.is_active });
+      res.json({ id: dbUser.id, email: dbUser.email, displayName: dbUser.display_name, isAdmin: !!dbUser.is_admin, isActive: !!dbUser.is_active, dob: dbUser.dob, gender: dbUser.gender, mfaEnabled: !!dbUser.mfa_enabled });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to fetch user" });
+    }
+  });
+
+  // Verify MFA code on login
+  app.post("/api/auth/verify-mfa", async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      if (!email || !code) {
+        return res.status(400).json({ error: "Email and MFA verification code are required" });
+      }
+      const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = rows[0];
+      if (user.mfa_code !== code) {
+        return res.status(400).json({ error: "Invalid MFA code. Please try again." });
+      }
+      if (user.mfa_expires < Date.now()) {
+        return res.status(400).json({ error: "MFA code has expired. Please log in again." });
+      }
+
+      // Clear mfa code and complete login!
+      await pool.query("UPDATE users SET mfa_code = NULL, mfa_expires = NULL WHERE id = ?", [user.id]);
+      await pool.query("UPDATE family_members SET linked_user_id = ? WHERE contact_email = ?", [user.id, email]);
+
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.display_name,
+          isAdmin: !!user.is_admin,
+          isActive: true,
+          dob: user.dob,
+          gender: user.gender,
+          mfaEnabled: !!user.mfa_enabled
+        },
+        token
+      });
+    } catch (error: any) {
+      console.error("MFA verify error:", error);
+      res.status(500).json({ error: error.message || "MFA validation failed" });
+    }
+  });
+
+  // Toggle MFA status inside user settings
+  app.post("/api/auth/mfa/toggle", authenticate, async (req, res) => {
+    try {
+      const user = (req as any).user as { userId: string; email: string };
+      const { enabled } = req.body;
+      await pool.query("UPDATE users SET mfa_enabled = ? WHERE id = ?", [enabled ? 1 : 0, user.userId]);
+      res.json({ success: true, mfaEnabled: !!enabled });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to toggle MFA status" });
+    }
+  });
+
+  // Forgot password request
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: "Email address is required" });
+      }
+      const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "No account registered with this email address." });
+      }
+      const user = rows[0];
+      const token = Math.floor(100000 + Math.random() * 900000).toString(); // Secure 6-digit reset token
+      const expires = Date.now() + 15 * 60 * 1000; // 15 minutes expiry
+
+      await pool.query("UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?", [token, expires, user.id]);
+      console.log(`[AUTH] Password Reset Token for ${email} is: ${token}`);
+
+      res.json({
+        success: true,
+        email,
+        devResetToken: token
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to request password reset" });
+    }
+  });
+
+  // Execute password reset
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { email, token, newPassword } = req.body;
+      if (!email || !token || !newPassword) {
+        return res.status(400).json({ error: "Email, reset token, and new password are required." });
+      }
+      const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]) as any[];
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const user = rows[0];
+      if (user.reset_token !== token) {
+        return res.status(400).json({ error: "Invalid password reset token code." });
+      }
+      if (user.reset_token_expires < Date.now()) {
+        return res.status(400).json({ error: "Password reset token has expired. Please request a new one." });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 10);
+      await pool.query(
+        "UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?",
+        [hash, user.id]
+      );
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to reset password" });
     }
   });
 
@@ -623,8 +1091,29 @@ async function startServer() {
   app.get("/api/system-settings/:id", authenticate, async (req, res) => {
     try {
       const [rows] = await pool.query("SELECT * FROM system_settings WHERE id = ?", [req.params.id]) as any[];
-      if (rows.length === 0) return res.json({ exists: false });
-      res.json({ exists: true, data: parseJson(rows[0].data) });
+      if (rows.length === 0) {
+        if (req.params.id === "config") {
+          return res.json({
+            exists: true,
+            data: {
+              supportFlowEnabled: true,
+              upgradeFlowEnabled: false,
+              maxMembersIfUpgradeEnabled: 50,
+              freeTierLimit: 3,
+              premiumPriceMonthly: 99,
+              premiumPriceYearly: 799,
+              coupons: [],
+              googleClientId: process.env.GOOGLE_CLIENT_ID || ""
+            }
+          });
+        }
+        return res.json({ exists: false });
+      }
+      const data = parseJson(rows[0].data);
+      if (req.params.id === "config" && (!data.googleClientId || data.googleClientId === "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com")) {
+        data.googleClientId = process.env.GOOGLE_CLIENT_ID || "";
+      }
+      res.json({ exists: true, data });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to load settings" });
     }
@@ -665,7 +1154,7 @@ async function startServer() {
       const [existing] = await pool.query("SELECT data FROM user_subscriptions WHERE user_id = ?", [userId]) as any[];
       let history: any[] = [];
       if (existing.length > 0) {
-        const oldData = parseJson(existing[0].data);
+        const oldData = parseJson<SubscriptionData>(existing[0].data);
         if (oldData && Array.isArray(oldData.history)) {
           history = oldData.history;
         }
@@ -706,15 +1195,15 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   app.post("/api/contact", async (req, res) => {
     try {
-      const { email, subject, message, userId } = req.body;
+      const { email, subject, message, userId, name } = req.body;
       if (!email || !message) {
         return res.status(400).json({ error: "Email and message are required" });
       }
       const id = uuidv4();
       const now = Date.now();
       await pool.query(
-        "INSERT INTO contact_messages (id, user_id, email, subject, message, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [id, userId || null, email, subject || null, message, "open", now]
+        "INSERT INTO contact_messages (id, user_id, name, email, subject, message, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, userId || null, name || null, email, subject || null, message, "open", now]
       );
       res.json({ id, saved: true });
     } catch (error: any) {

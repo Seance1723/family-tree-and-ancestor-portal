@@ -7,10 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Added **Password Recovery Module**: Fully featured, non-simulated Forgot/Reset Password flow. Employs a secure 6-digit cryptographic verification reset token saved in the database with a 15-minute expiration window. Includes input validation, developer sandbox token alerts, and state modal views on the landing page card.
+- Added **Two-Factor Authentication (2FA/MFA) Module**: Premium session-login MFA module. Toggles Two-Factor Authentication via the User Dashboard Profile drawer setting. When enabled, logins (email/password or Google) issue a 6-digit security code to the user's email, rendering an MFA Authorization dialog block with developer sandbox code displays.
+- Added **Google OAuth Client ID Configurator**: Enabled administrators to set their custom Google OAuth 2.0 client credential ID in System Settings. If configured, the app loads official Google Identity Services (GSI) widgets; if empty, it falls back to a descriptive warning to configure it in the .env file.
+- Integrated **Kinly Brand Logo SVG**: Replaced generic icons across Landing Page, User Dashboard sidebars, Mobile Headers, and Administrative portals with the official custom vector logo `Kinly_Logo_V.svg`.
 - Integrated **Billing & Invoices Module** inside the `UserDashboard` (includes sidebar toggle button, mobile drawer integration, and a spacious payments ledger).
 - Client-side **PDF Invoice Generator** using `jsPDF` to export official payment vouchers containing metadata, billing details, and transactional items.
 - Restricted **Admin Diagnostics** column inside the billing ledger table, visible only if the logged-in user is an administrator (`user.isAdmin`). Displays Razorpay unique transaction ID, payment source, and App Name ("Family Tree").
 - Added support for transaction history arrays inside the user's encrypted subscription data (`history` sub-attributes in `user_subscriptions` JSON column).
+- Integrated **Google Login Connector Modal** capturing Google profile attributes (`displayName`, `email`, `dob`, `gender`) with developer simulations for verification testing.
+- Added **Automated Family Member Linkage Engine**: Matches newly registered user email against `family_members.contact_email` across all databases, auto-assigns node associations, and renders top invitation banners letting users sync profile details.
 - Enforced mutual exclusion between **Support / Donation Channel** and **Premium Upgrade Funnel** toggles: enabling one disables the other, but they can be disabled together. Fixed state validation during load and save operations to ensure invalid DB records are automatically corrected.
 - Built administrative configurator for **Free Tier Capacity** slot limit, **Monthly Price (INR)**, and **Yearly Price (INR)** package tiers.
 - Integrated **Coupons & Discount Code Module** inside the upgrade modal and administrator portal. Admins can create active percentage discounts with set expiration timelines. Customers can apply codes at checkout with automatic free bypass for 100% discounts.

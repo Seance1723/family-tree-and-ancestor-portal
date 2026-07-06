@@ -5,7 +5,10 @@ import {
   getSystemSettings,
   getUserSubscription,
   saveUserSubscription,
-  getUserDonations
+  getUserDonations,
+  getLinkedFamilyMembers,
+  updateUserProfile,
+  toggleMfa
 } from "../../services/auth";
 import { 
   FamilyMember, 
@@ -221,6 +224,10 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [documents, setDocuments] = useState<HistoricalDocument[]>([]);
   const [reminders, setReminders] = useState<AnniversaryReminder[]>([]);
+
+  // MFA & Settings Modal states
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [isTogglingMfa, setIsTogglingMfa] = useState(false);
 
   // Undo/Redo Action History stack
   const [past, setPast] = useState<FamilyMember[][]>([]);
@@ -635,6 +642,19 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
     message: string;
     onConfirm: () => void | Promise<void>;
   } | null>(null);
+  
+  // Match link status
+  const [linkedMembers, setLinkedMembers] = useState<any[]>([]);
+  const [isSyncingProfile, setIsSyncingProfile] = useState(false);
+
+  const loadLinkedMembers = async () => {
+    try {
+      const data = await getLinkedFamilyMembers();
+      setLinkedMembers(data || []);
+    } catch (e) {
+      console.warn("Failed to check linked family member trees:", e);
+    }
+  };
 
   // Initial Load & Auth effects
   useEffect(() => {
@@ -644,6 +664,7 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
     triggerSync(user.uid);
     loadRequests();
     loadUserDonationsData();
+    loadLinkedMembers();
   }, [user.uid]);
 
   // Periodic polling for incoming requests
@@ -1016,10 +1037,9 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
       {/* SIDEBAR NAVIGATION */}
       <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col shrink-0 hidden lg:flex border-r border-slate-800">
         <div className="p-6 border-b border-slate-800">
-          <h1 className="text-xl font-bold tracking-tight flex items-center gap-2 text-white">
-            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white text-xs font-mono">KN</div>
-            Kinly
-          </h1>
+          <div className="flex justify-start">
+            <img src="/Kinly_Logo_V.svg" className="h-8.5 w-auto rounded-xl bg-white p-1.5 border border-slate-800 shadow-sm" alt="Kinly Logo" />
+          </div>
         </div>
         
         <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
@@ -1271,9 +1291,7 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
         {/* Top Header bar */}
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 sticky top-0 z-40">
           <div className="flex items-center gap-3">
-            <div className="lg:hidden h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md">
-              <Network className="h-4.5 w-4.5" />
-            </div>
+            <img src="/Kinly_Logo_V.svg" className="lg:hidden h-6 w-auto rounded bg-white p-0.5 border border-slate-200" alt="Kinly Logo" />
             <h2 className="text-base font-semibold text-slate-900 tracking-tight">
               {activeTab === "tree" && "Interactive Family Tree"}
               {activeTab === "archive" && "Historical Records Archive"}
@@ -1303,6 +1321,17 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
             >
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Add Member</span>
+            </button>
+
+            <div className="h-4 w-px bg-slate-200"></div>
+
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="px-2.5 py-1.5 rounded-lg hover:bg-slate-100 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-all cursor-pointer flex items-center gap-1.5"
+              title="Profile & Security Settings"
+            >
+              <UserIcon className="h-3.5 w-3.5 text-slate-500" />
+              <span className="hidden md:inline">Profile</span>
             </button>
 
             <div className="h-4 w-px bg-slate-200"></div>
@@ -1402,10 +1431,64 @@ export default function UserDashboard({ user, onLogout, onEnterAdmin }: UserDash
           </nav>
         </div>
 
-        {/* Content Box */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
           <div className="max-w-7xl mx-auto space-y-6">
             
+            {/* Account Linkage Notifications */}
+            {linkedMembers.length > 0 && (
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6 border border-blue-500/35">
+                <div className="space-y-1 max-w-2xl relative z-10">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider mb-2">
+                    <Sparkles className="h-3.5 w-3.5 text-blue-200" />
+                    <span>Lineage Match Detected</span>
+                  </span>
+                  <h3 className="text-lg font-black tracking-tight text-white">Linked Family Member Found</h3>
+                  <p className="text-xs text-blue-100 leading-relaxed">
+                    You have been listed as a family member in the tree of <strong>{linkedMembers[0].ownerName}</strong> ({linkedMembers[0].ownerEmail}). 
+                    We can automatically link your account profile to this record so that details (Name, DOB, and Gender) are synchronized.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 shrink-0 relative z-10">
+                  <button
+                    type="button"
+                    disabled={isSyncingProfile}
+                    onClick={async () => {
+                      setIsSyncingProfile(true);
+                      try {
+                        const m = linkedMembers[0];
+                        const confirmDob = window.prompt("Confirm your Date of Birth (YYYY-MM-DD):", user.dob || "");
+                        await updateUserProfile({
+                          displayName: m.name,
+                          gender: m.gender,
+                          dob: confirmDob || undefined
+                        });
+                        alert("Profile details successfully updated and linked!");
+                        setLinkedMembers([]);
+                        window.location.reload();
+                      } catch (err: any) {
+                        alert("Sync failed: " + err.message);
+                      } finally {
+                        setIsSyncingProfile(false);
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-white text-blue-700 hover:bg-blue-50 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                  >
+                    {isSyncingProfile ? "Syncing..." : "Sync & Link Profile"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLinkedMembers([]);
+                    }}
+                    className="px-4 py-2.5 bg-transparent border border-white/30 hover:bg-white/10 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                <div className="absolute right-0 bottom-0 h-40 w-40 bg-white/5 rounded-full blur-3xl pointer-events-none" />
+              </div>
+            )}
+
             {activeTab === "tree" && (
               <div className="space-y-6">
                 <div className="flex border-b border-slate-200 pb-px">
@@ -3017,6 +3100,115 @@ function BillingHistoryTab({ user, subscription, donations }: BillingHistoryTabP
           </table>
         </div>
       </div>
+      {/* Profile & Security Settings Modal */}
+      <AnimatePresence>
+        {showSettingsModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-200 p-6 space-y-6 text-slate-800 font-sans"
+            >
+              <div className="h-1.5 -mx-6 -mt-6 w-[calc(100%+3rem)] bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"></div>
+
+              <div className="absolute top-4 right-4 z-10">
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-505 hover:text-slate-800 transition-colors cursor-pointer"
+                  title="Close Settings"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
+                  <Shield className="h-5 w-5 text-blue-600" />
+                  <span>Profile & Security Settings</span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Manage your personal archive profile metadata and security parameters.
+                </p>
+              </div>
+
+              {/* User profile metadata */}
+              <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 space-y-3.5">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account Metadata</h4>
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <span className="text-slate-500 block">Display Name</span>
+                    <strong className="text-slate-800 block mt-0.5">{user.displayName || "Not configured"}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Email Address</span>
+                    <strong className="text-slate-800 block mt-0.5">{user.email}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Date of Birth</span>
+                    <strong className="text-slate-800 block mt-0.5">{user.dob || "Not specified"}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Gender</span>
+                    <strong className="text-slate-800 block mt-0.5 capitalize">{user.gender || "Not specified"}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* MFA / Two-Factor Toggle */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Security Controls</h4>
+                <div className="flex items-center justify-between p-4 bg-slate-50 border border-slate-150 rounded-2xl">
+                  <div className="space-y-0.5 flex-1 pr-4">
+                    <span className="text-xs font-bold text-slate-800 block">Two-Factor Authentication (2FA/MFA)</span>
+                    <span className="text-[10px] text-slate-500 block leading-relaxed">
+                      Secure login sessions using a unique 6-digit confirmation code issued to your email on authentication.
+                    </span>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={isTogglingMfa}
+                      onClick={async () => {
+                        setIsTogglingMfa(true);
+                        try {
+                          const targetState = !user.mfaEnabled;
+                          await toggleMfa(targetState);
+                          user.mfaEnabled = targetState; // update local instance
+                          triggerToast(`MFA ${targetState ? "enabled" : "disabled"} successfully!`);
+                        } catch (err: any) {
+                          alert(err.message || "Failed to update MFA settings.");
+                        } finally {
+                          setIsTogglingMfa(false);
+                        }
+                      }}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        user.mfaEnabled ? "bg-blue-600" : "bg-slate-200"
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                          user.mfaEnabled ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-800 font-bold text-xs rounded-xl cursor-pointer transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

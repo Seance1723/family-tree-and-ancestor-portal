@@ -8,6 +8,9 @@ export type User = {
   photoURL?: string | null;
   isAdmin?: boolean;
   isActive?: boolean;
+  dob?: string | null;
+  gender?: string | null;
+  mfaEnabled?: boolean;
 };
 
 export interface UserCredential {
@@ -86,9 +89,15 @@ export const auth = {
 export async function signInWithEmailAndPassword(
   email: string,
   password: string
-): Promise<UserCredential> {
+): Promise<any> {
   console.log("[auth] signInWithEmailAndPassword start", email);
   const data = await apiPost("/api/auth/login", { email, password });
+  if (data.requiresVerification) {
+    return { requiresVerification: true, email: data.email, devOtpCode: data.devOtpCode };
+  }
+  if (data.requiresMfa) {
+    return { requiresMfa: true, email: data.email, devMfaCode: data.devMfaCode };
+  }
   console.log("[auth] login API response", data.user?.email);
   setToken(data.token);
   const user: User = {
@@ -98,6 +107,9 @@ export async function signInWithEmailAndPassword(
     photoURL: null,
     isAdmin: !!data.user.isAdmin,
     isActive: data.user.isActive !== false,
+    dob: data.user.dob,
+    gender: data.user.gender,
+    mfaEnabled: !!data.user.mfaEnabled,
   };
   setUser(user);
   notifyListeners(user);
@@ -107,8 +119,11 @@ export async function signInWithEmailAndPassword(
 export async function createUserWithEmailAndPassword(
   email: string,
   password: string
-): Promise<UserCredential> {
+): Promise<any> {
   const data = await apiPost("/api/auth/register", { email, password });
+  if (data.requiresVerification) {
+    return { requiresVerification: true, email: data.email, devOtpCode: data.devOtpCode };
+  }
   setToken(data.token);
   const user: User = {
     uid: data.user.id,
@@ -117,10 +132,121 @@ export async function createUserWithEmailAndPassword(
     photoURL: null,
     isAdmin: !!data.user.isAdmin,
     isActive: data.user.isActive !== false,
+    dob: data.user.dob,
+    gender: data.user.gender,
+    mfaEnabled: !!data.user.mfaEnabled,
   };
   setUser(user);
   notifyListeners(user);
   return { user };
+}
+
+export async function signInWithGoogle(payload: {
+  googleId: string;
+  email: string;
+  displayName?: string;
+  dob?: string;
+  gender?: string;
+  credentialToken?: string;
+}): Promise<any> {
+  console.log("[auth] signInWithGoogle start", payload.email);
+  const data = await apiPost("/api/auth/google-login", payload);
+  if (data.requiresVerification) {
+    return { requiresVerification: true, email: data.email, devOtpCode: data.devOtpCode };
+  }
+  if (data.requiresMfa) {
+    return { requiresMfa: true, email: data.email, devMfaCode: data.devMfaCode };
+  }
+  setToken(data.token);
+  const user: User = {
+    uid: data.user.id,
+    email: data.user.email,
+    displayName: data.user.displayName,
+    photoURL: null,
+    isAdmin: !!data.user.isAdmin,
+    isActive: data.user.isActive !== false,
+    dob: data.user.dob,
+    gender: data.user.gender,
+    mfaEnabled: !!data.user.mfaEnabled,
+  };
+  setUser(user);
+  notifyListeners(user);
+  return { user };
+}
+
+export async function verifyOtp(email: string, otp: string): Promise<UserCredential> {
+  const data = await apiPost("/api/auth/verify-otp", { email, otp });
+  setToken(data.token);
+  const user: User = {
+    uid: data.user.id,
+    email: data.user.email,
+    displayName: data.user.displayName,
+    photoURL: null,
+    isAdmin: !!data.user.isAdmin,
+    isActive: data.user.isActive !== false,
+    dob: data.user.dob,
+    gender: data.user.gender,
+  };
+  setUser(user);
+  notifyListeners(user);
+  return { user };
+}
+
+export async function verifyMfa(email: string, code: string): Promise<UserCredential> {
+  const data = await apiPost("/api/auth/verify-mfa", { email, code });
+  setToken(data.token);
+  const user: User = {
+    uid: data.user.id,
+    email: data.user.email,
+    displayName: data.user.displayName,
+    photoURL: null,
+    isAdmin: !!data.user.isAdmin,
+    isActive: data.user.isActive !== false,
+    dob: data.user.dob,
+    gender: data.user.gender,
+    mfaEnabled: !!data.user.mfaEnabled,
+  };
+  setUser(user);
+  notifyListeners(user);
+  return { user };
+}
+
+export async function toggleMfa(enabled: boolean): Promise<any> {
+  const data = await apiPost("/api/auth/mfa/toggle", { enabled });
+  const storedUser = getStoredUser();
+  if (storedUser) {
+    storedUser.mfaEnabled = !!enabled;
+    setUser(storedUser);
+    notifyListeners(storedUser);
+  }
+  return data;
+}
+
+export async function forgotPassword(email: string): Promise<any> {
+  return apiPost("/api/auth/forgot-password", { email });
+}
+
+export async function resetPassword(payload: { email: string; token: string; newPassword: string }): Promise<any> {
+  return apiPost("/api/auth/reset-password", payload);
+}
+
+export async function updateUserProfile(payload: {
+  displayName?: string;
+  dob?: string;
+  gender?: string;
+}): Promise<void> {
+  await apiPost("/api/auth/profile", payload);
+  const current = getStoredUser();
+  if (current) {
+    const updated: User = {
+      ...current,
+      displayName: payload.displayName !== undefined ? payload.displayName : current.displayName,
+      dob: payload.dob !== undefined ? payload.dob : current.dob,
+      gender: payload.gender !== undefined ? payload.gender : current.gender,
+    };
+    setUser(updated);
+    notifyListeners(updated);
+  }
 }
 
 export async function signOut(): Promise<void> {
@@ -162,6 +288,8 @@ export function onAuthStateChanged(
         photoURL: null,
         isAdmin: !!data.isAdmin,
         isActive: data.isActive !== false,
+        dob: data.dob,
+        gender: data.gender,
       };
       setUser(validUser);
       if (!cancelled) callback(validUser);
@@ -177,6 +305,10 @@ export function onAuthStateChanged(
   };
 }
 
+export async function getLinkedFamilyMembers(): Promise<any[]> {
+  return apiGet("/api/users/linked-members");
+}
+
 /* ───────────────────────────── Native DB Helpers ───────────────────────────── */
 
 export async function getSystemSettings(): Promise<{
@@ -187,6 +319,7 @@ export async function getSystemSettings(): Promise<{
   premiumPriceMonthly: number;
   premiumPriceYearly: number;
   coupons: any[];
+  googleClientId?: string;
 } | null> {
   try {
     const res = await apiGet("/api/system-settings/config");
@@ -203,6 +336,7 @@ export async function getSystemSettings(): Promise<{
         premiumPriceMonthly: res.data?.premiumPriceMonthly ?? 99,
         premiumPriceYearly: res.data?.premiumPriceYearly ?? 799,
         coupons: res.data?.coupons || [],
+        googleClientId: res.data?.googleClientId ?? "",
       };
     }
     return null;

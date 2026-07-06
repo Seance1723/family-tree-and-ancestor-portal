@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import SupportAndLegal from "./SupportAndLegal";
+import { forgotPassword, resetPassword } from "../services/auth";
 
 interface LandingPageProps {
   email: string;
@@ -37,6 +38,7 @@ interface LandingPageProps {
   handleEmailAuth: (e: React.FormEvent) => void;
   handleGoogleLogin: () => void;
   onBypassLanding?: () => void;
+  captchaComponent?: React.ReactNode;
 }
 
 interface SandboxNode {
@@ -151,13 +153,26 @@ export default function LandingPage({
   authError,
   setAuthError,
   handleEmailAuth,
-  handleGoogleLogin
+  handleGoogleLogin,
+  captchaComponent
 }: LandingPageProps) {
   const [selectedNode, setSelectedNode] = useState<SandboxNode | null>(INITIAL_NODES[4]);
   const [isEncryptedView, setIsEncryptedView] = useState(true);
   const [decryptedText, setDecryptedText] = useState("");
   const [showSupportModal, setShowSupportModal] = useState(false);
   const authSectionRef = useRef<HTMLDivElement>(null);
+
+  // Forgot Password / Reset Password States
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotStep, setForgotStep] = useState(1); // 1 = request token, 2 = reset password
+  const [forgotToken, setForgotToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+  const [devResetCode, setDevResetCode] = useState("");
+  const [isSubmittingForgot, setIsSubmittingForgot] = useState(false);
 
   // Smooth scroll to auth forms section
   const scrollToAuth = () => {
@@ -215,15 +230,9 @@ export default function LandingPage({
       {/* Navigation Header */}
       <header className="relative z-20 w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between border-b border-slate-900 bg-slate-950/50 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
-            <Network className="h-5.5 w-5.5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-sans font-black text-xl tracking-tight text-white">Kinly</span>
-              <span className="text-xs bg-blue-500/10 border border-blue-500/30 text-blue-400 font-mono font-bold px-1.5 py-0.2 rounded-full">v2.1</span>
-            </div>
-            <span className="text-[9px] font-mono font-extrabold text-slate-500 tracking-widest block uppercase">Zero-Knowledge Genealogist</span>
+          <img src="/Kinly_Logo_V.svg" className="h-9 w-auto rounded-xl bg-white p-1.5 border border-slate-800 shadow-md" alt="Kinly Logo" />
+          <div className="hidden sm:block">
+            <span className="text-[9px] font-mono font-extrabold text-slate-500 tracking-widest block uppercase leading-none">Zero-Knowledge Vault</span>
           </div>
         </div>
 
@@ -669,11 +678,11 @@ export default function LandingPage({
         <div className="w-full max-w-lg space-y-8">
           
           <div className="text-center space-y-3">
-            <div className="mx-auto h-12 w-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-xl shadow-blue-500/20">
-              <Network className="h-6 w-6" />
+            <div className="flex justify-center">
+              <img src="/Kinly_Logo_V.svg" className="h-12 w-auto rounded-xl bg-white p-1.5 border border-slate-800 shadow-xl" alt="Kinly Logo" />
             </div>
             <div>
-              <h3 className="text-2xl font-black text-white tracking-tight">Kinly Vault Portal</h3>
+              <h3 className="text-2xl font-black text-white tracking-tight mt-1">Kinly Vault Portal</h3>
               <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
                 Authenticate with the local vault to load your private family graph, search missing kin, and secure your lineage logs.
               </p>
@@ -710,32 +719,12 @@ export default function LandingPage({
               </button>
             </div>
 
-            {/* Google Login button (disabled in SQL backend) */}
-            <button
-              id="landing-auth-btn-google"
-              onClick={handleGoogleLogin}
-              className="w-full flex justify-center items-center gap-3 px-4 py-3 rounded-2xl border border-slate-800 bg-slate-950 hover:bg-slate-900 text-xs font-bold text-white shadow-md hover:border-slate-700 transition-all cursor-pointer"
-            >
-              <svg className="h-4.5 w-4.5" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>Continue with Google</span>
-            </button>
+            {/* Google Services OAuth Button Container */}
+            <div id="google-signin-btn-container" className="w-full flex justify-center min-h-[44px]">
+              <div className="text-[10px] text-slate-500 font-sans italic text-center py-2">
+                Loading Google OAuth Services...
+              </div>
+            </div>
 
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
@@ -775,6 +764,30 @@ export default function LandingPage({
                   className="w-full text-xs px-3.5 py-3 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500 font-sans"
                 />
               </div>
+
+              {!isSignUp && (
+                <div className="flex justify-end -mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotEmail(email);
+                      setForgotStep(1);
+                      setForgotError("");
+                      setForgotSuccess("");
+                      setDevResetCode("");
+                      setForgotToken("");
+                      setNewPassword("");
+                      setConfirmPassword("");
+                      setShowForgotModal(true);
+                    }}
+                    className="text-[10px] text-slate-500 hover:text-blue-400 font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
+
+              {captchaComponent}
 
               {authError && (
                 <div className="text-xs text-rose-500 font-medium font-sans leading-relaxed bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-xl flex items-center gap-2">
@@ -844,6 +857,206 @@ export default function LandingPage({
               <div className="max-h-[85vh] overflow-y-auto">
                 <SupportAndLegal />
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Forgot / Reset Password Modal */}
+      <AnimatePresence>
+        {showForgotModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-slate-900 border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl p-6 space-y-5 text-slate-100 font-sans"
+            >
+              <div className="h-1.5 -mx-6 -mt-6 w-[calc(100%+3rem)] bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"></div>
+
+              <div className="absolute top-4 right-4 z-10">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotModal(false)}
+                  className="p-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Close Modal"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Developer Sandbox Token Display */}
+              {devResetCode && forgotStep === 2 && (
+                <div className="bg-blue-600/15 border border-blue-500/35 rounded-2xl p-4 space-y-1 text-center">
+                  <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-wider">Developer Sandbox Mode</h4>
+                  <p className="text-xs font-bold text-white font-mono">
+                    Reset Token: <span className="bg-slate-950 px-2 py-0.5 rounded text-blue-400 font-bold">{devResetCode}</span>
+                  </p>
+                </div>
+              )}
+
+              {forgotStep === 1 ? (
+                /* STEP 1: REQUEST TOKEN */
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!forgotEmail) return;
+                    setIsSubmittingForgot(true);
+                    setForgotError("");
+                    setForgotSuccess("");
+                    try {
+                      const res = await forgotPassword(forgotEmail);
+                      setForgotSuccess("A password reset code has been generated!");
+                      setDevResetCode(res.devResetToken || "");
+                      setForgotStep(2);
+                    } catch (err: any) {
+                      setForgotError(err.message || "Failed to request password reset.");
+                    } finally {
+                      setIsSubmittingForgot(false);
+                    }
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="text-center space-y-1">
+                    <h3 className="text-base font-bold text-white">Reset Vault Password</h3>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Enter the email address registered with your Kinly account, and we will issue a secure 6-digit password reset validation token.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-400">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@example.com"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      className="w-full text-xs px-3.5 py-3 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500 font-sans"
+                    />
+                  </div>
+
+                  {forgotError && <p className="text-xs text-rose-500 font-medium font-sans">{forgotError}</p>}
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingForgot}
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    {isSubmittingForgot ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Sending reset code...</span>
+                      </>
+                    ) : (
+                      <span>Request Password Reset Token</span>
+                    )}
+                  </button>
+                </form>
+              ) : (
+                /* STEP 2: RESET PASSWORD */
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!forgotToken || !newPassword || !confirmPassword) return;
+                    if (newPassword !== confirmPassword) {
+                      setForgotError("Passwords do not match.");
+                      return;
+                    }
+                    setIsSubmittingForgot(true);
+                    setForgotError("");
+                    try {
+                      await resetPassword({
+                        email: forgotEmail,
+                        token: forgotToken,
+                        newPassword
+                      });
+                      alert("Your password has been reset successfully! You can now log in.");
+                      setShowForgotModal(false);
+                    } catch (err: any) {
+                      setForgotError(err.message || "Failed to reset password. Please check your token.");
+                    } finally {
+                      setIsSubmittingForgot(false);
+                    }
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="text-center space-y-1">
+                    <h3 className="text-base font-bold text-white">Enter Reset Token</h3>
+                    <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+                      Please enter the 6-digit token code along with your new password.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3.5">
+                    {/* Reset Token input */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-400">Reset Token (6 digits)</label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={6}
+                        placeholder="Enter 6-digit reset code"
+                        value={forgotToken}
+                        onChange={(e) => setForgotToken(e.target.value.replace(/\D/g, ""))}
+                        className="w-full text-center tracking-widest font-mono text-sm px-3.5 py-2.5 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    {/* New Password */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-400">New Password</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="Enter new password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full text-xs px-3.5 py-3 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500 font-sans"
+                      />
+                    </div>
+
+                    {/* Confirm New Password */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-400">Confirm New Password</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="Re-type new password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full text-xs px-3.5 py-3 rounded-xl border border-slate-800 bg-slate-950 text-white focus:outline-none focus:border-blue-500 font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  {forgotError && <p className="text-xs text-rose-500 font-medium font-sans">{forgotError}</p>}
+                  {forgotSuccess && <p className="text-xs text-emerald-400 font-medium font-sans">{forgotSuccess}</p>}
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingForgot}
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  >
+                    {isSubmittingForgot ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Updating password...</span>
+                      </>
+                    ) : (
+                      <span>Reset Vault Password</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep(1)}
+                    className="w-full text-center text-[10px] text-slate-500 hover:text-slate-300 font-bold uppercase tracking-wider pt-1 cursor-pointer"
+                  >
+                    Back to Step 1
+                  </button>
+                </form>
+              )}
             </motion.div>
           </div>
         )}

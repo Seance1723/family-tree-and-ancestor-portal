@@ -181,6 +181,7 @@ export default function SuperAdminPanel({
   const [premiumPriceMonthly, setPremiumPriceMonthly] = useState(99);
   const [premiumPriceYearly, setPremiumPriceYearly] = useState(799);
   const [coupons, setCoupons] = useState<{ code: string; discountPct: number; expiresAt: number; isActive: boolean }[]>([]);
+  const [googleClientId, setGoogleClientId] = useState("");
 
   const [newCouponCode, setNewCouponCode] = useState("");
   const [newCouponDiscount, setNewCouponDiscount] = useState<number>(10);
@@ -299,6 +300,7 @@ export default function SuperAdminPanel({
           setPremiumPriceMonthly(s.premiumPriceMonthly ?? 99);
           setPremiumPriceYearly(s.premiumPriceYearly ?? 799);
           setCoupons(s.coupons || []);
+          setGoogleClientId(s.googleClientId ?? "");
         } else {
           await apiPost("/api/system-settings/config", {
             supportFlowEnabled: true,
@@ -308,9 +310,11 @@ export default function SuperAdminPanel({
             premiumPriceMonthly: 99,
             premiumPriceYearly: 799,
             coupons: [],
+            googleClientId: "",
           });
           setSupportFlowEnabled(true);
           setUpgradeFlowEnabled(false);
+          setGoogleClientId("");
         }
       } catch {
         console.warn("Failed to fetch settings, using defaults");
@@ -396,6 +400,7 @@ export default function SuperAdminPanel({
         premiumPriceMonthly: Number(premiumPriceMonthly) || 99,
         premiumPriceYearly: Number(premiumPriceYearly) || 799,
         coupons,
+        googleClientId,
       });
       setSupportFlowEnabled(finalSupport);
       setUpgradeFlowEnabled(finalUpgrade);
@@ -642,15 +647,10 @@ export default function SuperAdminPanel({
         <div className="space-y-8">
           {/* Brand Header */}
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 bg-amber-500/10 rounded-xl flex items-center justify-center border border-amber-500/20 shrink-0">
-              <Shield className="h-5 w-5 text-amber-500 stroke-[2.5]" />
-            </div>
+            <img src="/Kinly_Logo_V.svg" className="h-8.5 w-auto rounded-xl bg-white p-1.5 border border-slate-800 shadow-md" alt="Kinly Logo" />
             <div>
-              <span className="text-sm font-black uppercase tracking-wider text-white">
-                Kinly Vault
-              </span>
-              <p className="text-[9px] tracking-widest text-slate-500 font-bold uppercase mt-0.5">
-                OPERATIONS CENTER
+              <p className="text-[9px] tracking-widest text-slate-500 font-bold uppercase leading-none mt-0.5">
+                OPERATIONS
               </p>
             </div>
           </div>
@@ -1800,8 +1800,30 @@ export default function SuperAdminPanel({
                         </div>
                       </div>
 
+                      {/* Google OAuth Client ID config */}
+                      <div className="h-px bg-slate-100 my-4" />
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="space-y-1 flex-1">
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                            Google OAuth Client ID
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-1 max-w-lg">
+                            Configure a valid Google OAuth 2.0 client credentials ID to enable real Google authentication service widgets. Leave blank to force sandbox simulation mode.
+                          </p>
+                        </div>
+                        <div className="w-full sm:w-80">
+                          <input
+                            type="text"
+                            placeholder="e.g. 12345-abcde.apps.googleusercontent.com"
+                            value={googleClientId}
+                            onChange={(e) => setGoogleClientId(e.target.value)}
+                            className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                          />
+                        </div>
+                      </div>
+
                       {/* Save Button */}
-                      <div className="pt-2 flex justify-end">
+                      <div className="pt-4 flex justify-end">
                         <button
                           type="button"
                           disabled={isSavingSettings}

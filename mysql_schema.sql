@@ -15,9 +15,13 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) DEFAULT NULL,
   display_name VARCHAR(255) DEFAULT NULL,
   google_id VARCHAR(255) DEFAULT NULL,
+  dob VARCHAR(128) DEFAULT NULL,
+  gender VARCHAR(64) DEFAULT NULL,
   created_at BIGINT NOT NULL,
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  verification_otp VARCHAR(6) DEFAULT NULL,
   INDEX idx_users_email (email),
   INDEX idx_users_google_id (google_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -36,6 +40,7 @@ CREATE TABLE IF NOT EXISTS family_members (
   children JSON DEFAULT NULL,
   contact_phone TEXT DEFAULT NULL,
   contact_email TEXT DEFAULT NULL,
+  linked_user_id VARCHAR(128) DEFAULT NULL,
   address TEXT DEFAULT NULL,
   privacy ENUM('private','family','public') NOT NULL DEFAULT 'private',
   is_ancestor BOOLEAN NOT NULL DEFAULT FALSE,
@@ -126,6 +131,7 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 CREATE TABLE IF NOT EXISTS contact_messages (
   id VARCHAR(128) PRIMARY KEY,
   user_id VARCHAR(128) DEFAULT NULL,
+  name VARCHAR(255) DEFAULT NULL,
   email VARCHAR(255) NOT NULL,
   subject VARCHAR(255) DEFAULT NULL,
   message TEXT NOT NULL,
